@@ -83,6 +83,9 @@ export async function saveSnapshot(flowId: string, name: string, content: string
     const { sb, userId } = await client();
     const { data, error } = await sb
       .from('pf_flows')
+      // owner_id is only used by the INSERT half of this upsert; on an
+      // existing row a trigger pins it back to whoever actually owns the flow,
+      // so saving a room you were invited into can't quietly take it over.
       .upsert({ id: flowId, owner_id: userId, name, content }, { onConflict: 'id' })
       .select('share_token, owner_id')
       .single();
