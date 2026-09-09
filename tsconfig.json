@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["vite/client"]
+  },
+  // `scripts/` is deliberately not typechecked here. Those test files came
+  // over from Warroom unmodified so the two copies can't drift, and they were
+  // written against a looser config; they are run (by tsx) rather than
+  // compiled, and a run that asserts 626 times is the check that matters.
+  "include": ["src"]
+}

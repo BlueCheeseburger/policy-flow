@@ -1,0 +1,631 @@
+/* Self-hosted fonts (via @fontsource) — bundled locally rather than fetched at
+   runtime, so the app looks identical on a tournament's captive wifi. */
+@import '@fontsource/hanken-grotesk/400.css';
+@import '@fontsource/hanken-grotesk/500.css';
+@import '@fontsource/hanken-grotesk/600.css';
+@import '@fontsource/hanken-grotesk/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+/* Indeterminate progress-bar sweep — used wherever work is happening but no
+   real percentage is known yet (e.g. the first moment of a download before
+   any file has reported its total). */
+@keyframes wr-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(333%); }
+}
+
+/* ── Theme tokens ─────────────────────────────────────────────────────────── */
+
+/*
+ * Every color in the app is a token defined here twice — once light on bare
+ * `:root`, once dark under `html.dark` — and nothing hardcodes a hex outside
+ * this file. That is not tidiness for its own sake: a value defined only once
+ * silently produces the wrong contrast in the other mode, which is exactly how
+ * an error message ended up at 2.6:1 against a dark background in the app this
+ * was ported from. Both modes are checked against WCAG AA (4.5:1 for text).
+ */
+
+/* ── LIGHT (default) ──────────────────────────────────────────────────────── */
+:root {
+  /* Color channel triples for Tailwind opacity modifiers */
+  --ink-rgb:    27 29 36;
+  --panel-rgb:  237 239 243;
+  --line-rgb:   30 40 70;
+  /* Semantic status colours. These are the LIGHT-mode values; html.dark
+   * re-states both, because one colour cannot serve both modes as text.
+   * Measured against every theme's --bg-main (WCAG AA needs 4.5:1 for text):
+   *   light --danger #b3261e → 5.7 / 5.8 / 6.3
+   *   light --warn   #96560a → 5.0 / 5.1 / 5.5   (was #c97a0a at 2.9 — failing)
+   * The old amber was only ever legible in dark mode, which is why so much of
+   * the app hardcoded its own red/amber instead of using these. */
+  --warn-rgb:   150 86 10;
+  --danger-rgb: 179 38 30;
+
+  /* ── Convenience aliases ──────────────────────────────────────────────────
+     Components across the app reach for these plain names (`var(--ink)` alone
+     accounts for 127 call sites). They were never declared, so every one of
+     those declarations was being dropped by the parser and the element silently
+     fell back to inheriting — wrong in dark mode and in the paper/editorial
+     directions especially. Declaring them here fixes every call site at once.
+
+     These MUST stay defined only on :root and only in terms of other tokens.
+     Every theme override (html.dark) lands on the same
+     html element, so the var() indirection below re-resolves per theme on its
+     own — do NOT redeclare these inside the theme blocks, or they'll go stale
+     the moment the underlying token changes. */
+  --ink:          rgb(var(--ink-rgb));
+  --ink-color:    rgb(var(--ink-rgb));
+  --ink-muted:    rgb(var(--ink-rgb) / 0.62); /* tracks --nav-inactive-color */
+  --ink-faint:    rgb(var(--ink-rgb) / 0.42); /* tracks --placeholder */
+  --danger:       rgb(var(--danger-rgb));
+  --danger-color: rgb(var(--danger-rgb));
+  /* --warn-rgb had no rgb() convenience form, so every amber in the app was
+   * hardcoded (#d97706 and #f59e0b, two different ambers for one meaning). */
+  --warn:         rgb(var(--warn-rgb));
+  --accent-color: var(--accent);
+  --bg-popover:   var(--bg-elevated);
+  --bg-hover:     var(--nav-hover-bg);
+  --bg-side:      var(--bg-sidebar);
+  --bg-sunken:    var(--bg-nest);
+  --emerald:      var(--pos);
+  --rose:         var(--neg);
+
+  /* Surface backgrounds */
+  --bg-main:     #edeff3;
+  --bg-sidebar:  #e5e8ee;
+  --bg-titlebar: #eaedf1;
+  --bg-card:     #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-nest:     #e9ecf2;
+  --bg-btn:      #e9ecf2;
+  --bg-btn-hover:   rgba(75,83,196,0.1);
+  --bg-btn-active:  #e9ecf2;
+  --bg-input:    #ffffff;
+
+  /* Accent — the personality colour of the theme */
+  --accent:      #4b53c4;
+  --accent-soft: rgba(75,83,196,0.1);
+  --pos:  #18a06a;
+  --neg:  #d8475e;
+  --aff:  #3f6fd6;
+
+  /* Borders */
+  --border-subtle: rgba(30,40,70,0.09);
+  --border-med:    rgba(30,40,70,0.16);
+  --border-strong: rgba(30,40,70,0.16);
+  --border-side:   rgba(30,40,70,0.09);
+
+  /* Shadows */
+  --shadow-card:     0 1px 3px rgba(30,40,70,0.07);
+  --shadow-elevated: 0 8px 28px -10px rgba(30,40,70,0.28), 0 2px 8px rgba(30,40,70,0.08);
+  --shadow-btn:      0 1px 2px rgba(30,40,70,0.06);
+  --shadow-btn-hover:0 2px 6px rgba(30,40,70,0.10);
+  --shadow-focus:    0 0 0 3px var(--accent-soft);
+
+  /* Navigation */
+  --nav-active-bg:     #ffffff;
+  --nav-active-color:  #1b1d24;
+  --nav-active-shadow: 0 1px 3px rgba(30,40,70,0.12);
+  --nav-hover-bg:      rgba(75,83,196,0.1);
+  --nav-inactive-color:rgba(40,44,56,0.62);
+  --nav-section-color: rgba(40,44,56,0.5);
+
+  /* Misc */
+  --mode-toggle-bg:   rgba(30,40,70,0.06);
+  --titlebar-label:   rgba(40,44,56,0.62);
+  --label-color:      rgba(40,44,56,0.5);
+  --placeholder:      rgba(40,44,56,0.42);
+  --divider:          rgba(30,40,70,0.09);
+  --scrollbar-thumb:  rgba(30,40,70,0.16);
+  --scrollbar-thin:   rgba(30,40,70,0.09);
+
+  /* Selected item in nav trees — takes the accent colour */
+  --item-selected-bg:   var(--accent);
+  --item-selected-text: #ffffff;
+
+  /* Settings active */
+  --settings-active-bg: rgba(75,83,196,0.1);
+
+  /* Typography & shape (Calm) */
+  --font-display: 'Hanken Grotesk', system-ui, sans-serif;
+  --font-text:    'Hanken Grotesk', system-ui, sans-serif;
+  --font-mono:    'IBM Plex Mono', ui-monospace, monospace;
+  --font-num:     'Hanken Grotesk', system-ui, sans-serif;
+  --radius-card:  13px;
+  --radius-sm:    9px;
+  --label-font:   'Hanken Grotesk', system-ui, sans-serif;
+  --label-size:   10px;
+  --label-weight: 700;
+  --label-spacing:0.14em;
+  --label-transform: uppercase;
+  --label-variant:   normal;
+}
+
+/* ── Calm Native · DARK ──────────────────────────────────────────────────── */
+html.dark {
+  --ink-rgb:    238 240 246;
+  --panel-rgb:  26 28 33;
+  --line-rgb:   180 195 235;
+
+  /* Status colours, lightened for a dark ground. The light-mode red scored
+   * 2.5–3.0:1 on the three dark backgrounds — unreadable, and the reason error
+   * text all over the app was hardcoded to a lighter red instead of using the
+   * token. Measured against default / paper / editorial dark --bg-main:
+   *   --danger #f87171 → 6.2 / 5.9 / 7.0
+   *   --warn   #f59e0b → 7.9 / 7.5 / 9.0
+   * This block also covers paper-dark and editorial-dark: neither of their
+   * blocks re-states these, so they inherit from here. */
+  --danger-rgb: 248 113 113;
+  --warn-rgb:   245 158 11;
+
+  --bg-main:     #1a1c21;
+  --bg-sidebar:  #131519;
+  --bg-titlebar: #0f1115;
+  --bg-card:     #25272e;
+  --bg-elevated: #2b2d35;
+  --bg-nest:     #1f2128;
+  --bg-btn:      #1f2128;
+  --bg-btn-hover:   rgba(124,130,238,0.18);
+  --bg-btn-active:  #1f2128;
+  --bg-input:    #1f2128;
+
+  --accent:      #7c82ee;
+  --accent-soft: rgba(124,130,238,0.18);
+  --pos:  #34d39a;
+  --neg:  #ff5a76;
+  --aff:  #6f9bff;
+
+  --border-subtle: rgba(180,195,235,0.1);
+  --border-med:    rgba(180,195,235,0.18);
+  --border-strong: rgba(180,195,235,0.18);
+  --border-side:   rgba(180,195,235,0.1);
+
+  --shadow-card:     0 1px 4px rgba(0,0,0,0.45);
+  --shadow-elevated: 0 10px 34px -10px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
+  --shadow-btn:      0 1px 3px rgba(0,0,0,0.4);
+  --shadow-btn-hover:0 2px 6px rgba(0,0,0,0.45);
+
+  --nav-active-bg:     #34373f;
+  --nav-active-color:  #eef0f6;
+  --nav-active-shadow: 0 1px 3px rgba(0,0,0,0.45);
+  --nav-hover-bg:      rgba(124,130,238,0.18);
+  --nav-inactive-color:rgba(225,228,240,0.6);
+  --nav-section-color: rgba(225,228,240,0.42);
+
+  --mode-toggle-bg:   rgba(180,195,235,0.1);
+  --titlebar-label:   rgba(225,228,240,0.6);
+  --label-color:      rgba(225,228,240,0.42);
+  --placeholder:      rgba(225,228,240,0.4);
+  --divider:          rgba(180,195,235,0.1);
+  --scrollbar-thumb:  rgba(180,195,235,0.18);
+  --scrollbar-thin:   rgba(180,195,235,0.1);
+
+  --settings-active-bg: rgba(124,130,238,0.18);
+}
+
+/* ── Warm Paper · LIGHT ──────────────────────────────────────────────────── */:root {
+  --glass-blur:     22px;
+  --glass-saturate: 1.6;
+  /* Per-surface opacity of the underlying solid color (rest is see-through). */
+  --glass-card-op:     74%;
+  --glass-elevated-op: 80%;
+  --glass-sidebar-op:  82%;
+  --glass-titlebar-op: 70%;
+  --glass-popover-op:  88%;
+}
+
+.glass-dark,
+.glass-sidebar {
+  background: color-mix(in srgb, var(--bg-sidebar) var(--glass-sidebar-op), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.glass-main {
+  background: var(--bg-main);
+}
+
+.glass-card {
+  background: color-mix(in srgb, var(--bg-card) var(--glass-card-op), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.glass-elevated {
+  background: color-mix(in srgb, var(--bg-elevated) var(--glass-elevated-op), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--border-side);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-elevated);
+}
+
+/* Inline-styled panels (titlebar, panel headers, popovers/menus) opt in via
+   these helpers — same translucency treatment without an inline background. */
+.glass-titlebar {
+  background: color-mix(in srgb, var(--bg-titlebar) var(--glass-titlebar-op), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.glass-popover {
+  background: color-mix(in srgb, var(--bg-popover, var(--bg-sidebar)) var(--glass-popover-op), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+/* ── Icon sizing helpers ──────────────────────────────────────────────────── */
+/* Size icons by setting the SVG's own width/height, NEVER with a fractional
+   `transform: scale()`. Chromium rasterizes a transformed element at its layout
+   size and then scales that bitmap, so `scale(0.72)` on a 20px icon produced a
+   blurry 14.4px bitmap instead of a crisp 14px vector render — that was the main
+   reason the sidebar's section icons looked fuzzy.
+   `stroke-width` is bumped to compensate for the smaller render so the stroke
+   still lands at ~1.5 CSS px and matches full-size icons (same reasoning as the
+   size-compensated strokeWidth in Sidebar.tsx's `Ico`). */
+.sb-ico-14 > svg { width: 14px;  height: 14px; stroke-width: 2.15; }
+.sb-ico-16 > svg { width: 16px;  height: 16px; stroke-width: 1.9; }
+
+/* Marks a button as triggering an AI/API call — a thin blue→pink gradient ring
+   drawn as a masked ::before "donut" behind the element, so it never disturbs
+   the button's own background/border/content (many of these buttons already
+   set an inline `background`, which a plain gradient-border trick would just
+   get painted over by). Always visible, not hover-only — the point is to let
+   users spot AI buttons at a glance, not discover them by hovering. Works with
+   any border-radius (inherits it), including fully round buttons.
+   Add this class to every button that leads to an AI/LLM API call. */
+.ai-glow-ring { position: relative; isolation: isolate; }
+.ai-glow-ring::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(135deg, #3b82f6, #ec4899);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.75;
+  transition: opacity 0.15s;
+  z-index: 1;
+}
+.ai-glow-ring:hover::before { opacity: 1; }
+
+/* Accessibility: the in-app "Reduce motion" setting (Settings.tsx → General),
+   toggled via the `reduce-motion` class on <html> in App.tsx. Also honored
+   automatically from the OS-level `prefers-reduced-motion` media query below,
+   independent of the in-app toggle — either one is enough to turn it off.
+   `!important` + universal selector because this needs to win over every
+   component's own inline transition/animation styles, not just Tailwind's. */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  transition-duration: 0.001ms !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Accessibility: when the user asks the OS to reduce transparency, fall back to
+   the fully opaque surfaces and drop the blur. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-dark, .glass-sidebar { background: var(--bg-sidebar); }
+  .glass-card     { background: var(--bg-card); }
+  .glass-elevated { background: var(--bg-elevated); }
+  .glass-titlebar { background: var(--bg-titlebar); }
+  .glass-popover  { background: var(--bg-popover, var(--bg-sidebar)); }
+  .glass-dark, .glass-sidebar, .glass-card, .glass-elevated, .glass-titlebar, .glass-popover {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+.glass-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-med);
+  border-radius: var(--radius-sm);
+}
+.glass-input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.btn {
+  @apply inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium transition;
+  border-radius: var(--radius-sm);
+  background: var(--bg-btn);
+  border: 1px solid var(--border-med);
+  color: rgb(var(--ink-rgb));
+  box-shadow: var(--shadow-btn);
+  cursor: pointer;
+}
+/* Icon-only square buttons — zero out the default padding so the SVG fills the button */
+.btn-icon {
+  padding: 0 !important;
+}
+.btn:hover {
+  background: var(--bg-btn-hover);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-btn-hover);
+}
+.btn:active {
+  transform: scale(0.97);
+  background: var(--bg-btn-active);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold transition;
+  border-radius: var(--radius-sm);
+  background: var(--item-selected-bg);
+  border: 1px solid var(--border-subtle);
+  color: var(--item-selected-text);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.08);
+  cursor: pointer;
+}
+.btn-primary:hover {
+  opacity: 0.88;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.28);
+}
+.btn-primary:active {
+  transform: scale(0.97);
+  opacity: 0.76;
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-blue {
+  @apply inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold transition;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  border: 1px solid rgba(0,0,0,0.1);
+  color: #ffffff;
+  box-shadow: 0 2px 8px var(--accent-soft);
+  cursor: pointer;
+}
+.btn-blue:hover {
+  opacity: 0.9;
+  box-shadow: 0 4px 12px var(--accent-soft);
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+
+.input {
+  @apply px-3 py-1.5 text-sm outline-none;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  border: 1px solid var(--border-med);
+  color: rgb(var(--ink-rgb));
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.06);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus), inset 0 1px 2px rgba(0,0,0,0.04);
+}
+.input::placeholder {
+  color: var(--placeholder);
+}
+
+/* ── Typography tokens ───────────────────────────────────────────────────── */
+
+.label {
+  font-family: var(--label-font), system-ui, sans-serif;
+  font-size: var(--label-size);
+  font-weight: var(--label-weight);
+  letter-spacing: var(--label-spacing);
+  text-transform: var(--label-transform);
+  font-variant: var(--label-variant);
+  color: var(--label-color);
+}
+.divider { border-top: 1px solid var(--divider); }
+
+/* ── Selected item (nav trees, etc.) ────────────────────────────────────── */
+
+.item-selected {
+  background: var(--item-selected-bg);
+  color: var(--item-selected-text);
+}
+
+/* ── Keyboard focus ──────────────────────────────────────────────────────── */
+/*
+ * One focus ring for the whole app, in the current theme's accent.
+ *
+ * There was none before, so every keyboard user got Chromium's own default ring
+ * — a colour from outside the palette, on only some elements, and invisible
+ * against the dark themes. `:focus-visible` (not `:focus`) is what keeps it off
+ * mouse clicks, so a clicked button doesn't keep a ring hanging on it.
+ *
+ * Text fields opt out: `.input:focus` / `.glass-input:focus` already answer with
+ * an accent border plus `--shadow-focus`, and stacking an outline on top of that
+ * reads as a double border. Flow cells opt out too — a ring around a
+ * contenteditable fights the caret and the cell's own selection styling.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.input:focus-visible,
+.glass-input:focus-visible,
+[contenteditable]:focus-visible {
+  outline: none;
+}
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+
+.scroll-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scroll-none::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+.scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }
+
+.sidebar-scroll::-webkit-scrollbar { width: 4px; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar-thin); border-radius: 2px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Side badges (Aff / Neg) — distinct from win/loss colours ───────────── */
+
+.badge-aff {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+html.dark .badge-aff {
+  background: rgba(29, 78, 216, 0.25);
+  color: #93c5fd;
+}
+
+.badge-neg {
+  background: #e2e8f0;
+  color: #475569;
+}
+html.dark .badge-neg {
+  background: rgba(71, 85, 105, 0.35);
+  color: #94a3b8;
+}
+
+/* ── Misc ────────────────────────────────────────────────────────────────── */
+
+.glass-border { border: 1px solid var(--border-subtle); }
+
+/* ── Loading animations ──────────────────────────────────────────────────── */
+
+@keyframes dot-wave {
+  0%, 60%, 100% { transform: translateY(0);    opacity: 0.3; }
+  30%            { transform: translateY(-5px); opacity: 1;   }
+}
+
+@keyframes shimmer-text {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.7;  }
+}
+
+/* Fade-in for each new line of cycling loader text (see CyclingText). */
+@keyframes lm-fade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Command-palette-style entrance for floating cards (ShortcutsOverlay, etc). */
+@keyframes wr-palette-in {
+  from { opacity: 0; transform: translate(-50%, -4px) scale(0.98); }
+  to   { opacity: 1; transform: translate(-50%, 0)    scale(1); }
+}
+
+/* ── docx-preview renderer ───────────────────────────────────────────────── */
+
+.docx-viewer-wrap {
+  min-height: 100%;
+  background: #e8e8ea;
+  padding: 8px 6px;
+}
+html.dark .docx-viewer-wrap:not(.docx-force-light) {
+  background: #2a2a2c;
+}
+
+html.dark .docx-viewer-wrap:not(.docx-force-light) * {
+  color: #e8e8ea !important;
+  border-color: rgba(240, 240, 242, 0.7) !important;
+}
+
+/* Settings → "Keep speech docs light": .docx-force-light (applied by
+   SpeechDocViewer when the app is dark and the setting is on) opts a wrap
+   out of both dark rules above, so it falls back to the base light
+   .docx-viewer-wrap rule — the doc page stays light even in a dark app. */
+
+/* Cmd/Ctrl+click section selection (SpeechDocViewer) */
+.wr-section-sel {
+  background: rgba(66, 133, 244, 0.16) !important;
+  box-shadow: -3px 0 0 rgba(66, 133, 244, 0.6) !important;
+}
+
+/* Flow cells are BOLD BY DEFAULT. On a flow the normal case is a tagline, and
+   it shouldn't take a keystroke to make one look like a tagline. "Not bold" is
+   therefore the marked state, written as an explicit font-weight: normal (see
+   setCellEmphasis in src/lib/cellHtml.ts) — which is also what ⌘B emits, since
+   the cell's own emphasis toggles run with styleWithCSS on. Existing flows pick
+   this up too: nothing is stored per cell, it's the baseline the cell renders at. */
+.flow-cell {
+  font-weight: 700;
+}
+
+/* Cells selected with ⌘-click, ready to be moved or formatted as a group. */
+.flow-cell-selected {
+  background: rgba(66, 133, 244, 0.16);
+  box-shadow: inset 0 0 0 1.5px var(--nav-active-color);
+}
+/* Where a dragged group would land if dropped now. */
+.flow-cell-drop {
+  box-shadow: inset 0 0 0 2px var(--nav-active-color);
+  background: rgba(66, 133, 244, 0.10);
+}
+/* A tab the cursor is holding a dragged group over, about to open. */
+.flow-tab-drop {
+  box-shadow: inset 0 2px 0 0 var(--nav-active-color);
+  background: var(--nav-active-bg);
+}
+
+/* Flow cells: highlighted runs keep dark ink so amber stays readable in dark mode. */
+.flow-cell span[style*="background-color"] {
+  color: #1a1a1a !important;
+  border-radius: 2px;
+}
+
+/* Flow find (⌘F) hits, painted via the CSS Custom Highlight API so the cell's own
+   HTML is never touched. Every hit on the sheet gets a soft wash; the one you're
+   currently stepping through gets a solid amber so the eye lands on it. Both force
+   dark ink — the wash sits under light text in dark mode, the solid one never does. */
+::highlight(flow-find) {
+  background-color: rgba(253, 230, 138, 0.3);
+}
+::highlight(flow-find-current) {
+  background-color: #fbbf24;
+  color: #1a1a1a;
+}
+
+/* Settings' "Search settings…" box — hits painted the same way, over
+   whatever section text is currently on screen. */
+::highlight(wr-settings-search) {
+  background-color: rgba(253, 230, 138, 0.45);
+  border-radius: 2px;
+}
+
+/* A cell is one flowing run of text, not a document. New pastes are flattened to
+   <br> (see cleanPastedHtml), but cells pasted before that existed still hold
+   Word's <p> markup, whose default 1em margin reads as a blank line above and
+   below every paragraph. Zero it so those cells render tight too. */
+.flow-cell p,
+.flow-cell div {
+  margin: 0;
+}
