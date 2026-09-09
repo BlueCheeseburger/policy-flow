@@ -213,7 +213,8 @@ html.dark {
   --settings-active-bg: rgba(124,130,238,0.18);
 }
 
-/* ── Warm Paper · LIGHT ──────────────────────────────────────────────────── */:root {
+/* ── Glass surfaces ──────────────────────────────────────────────────────── */
+:root {
   --glass-blur:     22px;
   --glass-saturate: 1.6;
   /* Per-surface opacity of the underlying solid color (rest is see-through). */
@@ -628,4 +629,59 @@ html.dark .docx-viewer-wrap:not(.docx-force-light) * {
 .flow-cell p,
 .flow-cell div {
   margin: 0;
+}
+
+/* ── Status pills ─────────────────────────────────────────────────────────────
+   A flow's state (live / shared / synced / local-only) reads as a small tinted
+   pill rather than a run of grey text, so it can be scanned down a grid instead
+   of read. Each tint is the token's own colour at low alpha, which keeps the
+   label itself at full token contrast — a flat grey chip would have failed AA
+   for the live and shared states in light mode. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pill-live   { background: color-mix(in srgb, var(--pos) 14%, transparent); color: var(--pill-live-fg); }
+.pill-shared { background: color-mix(in srgb, var(--aff) 15%, transparent); color: var(--pill-shared-fg); }
+.pill-muted  { background: var(--mode-toggle-bg); color: var(--ink-muted); }
+
+/* The pill text needs its own token per mode, for the reason stated at the top
+   of this file: --pos and --aff are tuned to carry a solid fill, and on their
+   own pale tint in LIGHT mode they measure 2.87:1 and 3.88:1 — both under the
+   4.5:1 floor. Darkening them for light mode brings both over 5:1. Dark mode
+   uses the raw tokens, which already measure 8.3:1 and 6.0:1 on the tint.
+   Measured, not eyeballed. */
+:root {
+  --pill-live-fg:   color-mix(in srgb, var(--pos) 70%, #000);  /* #0f6a47 → 5.2:1 */
+  --pill-shared-fg: color-mix(in srgb, var(--aff) 80%, #000);  /* #325aad → 5.4:1 */
+}
+html.dark {
+  --pill-live-fg:   var(--pos);                                /* #34d39a → 5.9:1 */
+  /* --aff on its own tint measures 4.32:1 here — just under the floor, which is
+     the kind of near-miss that only shows up when you actually measure it.
+     Lightening 20% toward white clears it at 5.4:1. */
+  --pill-shared-fg: color-mix(in srgb, var(--aff) 80%, #fff);  /* #8cafff → 5.4:1 */
+}
+
+/* A callout for something the user needs to weigh before acting — the API-key
+   warning is the only one so far. Deliberately not the rounded-box-with-a-
+   coloured-left-border pattern: the tint and the icon carry the meaning, and a
+   accent rule down one side reads as decoration at a glance. */
+.callout {
+  display: flex;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.5;
 }

@@ -23,6 +23,7 @@ import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
 import { summarizeFlowSheet } from '../platform/aiFeatures';
 import { saveSnapshot as cloudSaveSnapshot } from '../platform/cloud';
+import { readSettings, SETTINGS_CHANGED_EVENT } from '../platform/settings';
 import { readFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
 import { planStockIssueConversion, StockIssuePlan } from '../lib/stockIssueSuggest';
 import {
@@ -147,10 +148,6 @@ interface FlowSnapshot {
   event: 'policy' | 'pf';
 }
 
-const AFF_COLOR_KEY = 'warroom-flow-aff-color';
-const NEG_COLOR_KEY = 'warroom-flow-neg-color';
-const DEFAULT_AFF_COLOR = '#2563eb';
-const DEFAULT_NEG_COLOR = '#16a34a';
 const COLOR_SWATCHES = ['#2563eb', '#16a34a', '#dc2626', '#d97706', '#9333ea', '#0891b2', '#db2777', '#475569'];
 
 // Cell values are stored as HTML (to support bold/italic/underline/strikethrough
@@ -259,9 +256,12 @@ export default function FlowView() {
   const [variant, setVariant] = useState<PolicyVariant>('stock-issues');
   const [pfOrder, setPfOrder] = useState<PFOrder>('pro-first');
 
-  // Default side colors (set in Settings) — re-read on the colors-changed event.
-  const [affColor, setAffColor] = useState(() => localStorage.getItem(AFF_COLOR_KEY) || DEFAULT_AFF_COLOR);
-  const [negColor, setNegColor] = useState(() => localStorage.getItem(NEG_COLOR_KEY) || DEFAULT_NEG_COLOR);
+  // Default side colors, straight from Settings. These used to be read from
+  // two standalone localStorage keys that nothing in this app ever wrote — a
+  // leftover from the desktop port — so the Settings pickers changed a value
+  // the grid never looked at.
+  const [affColor, setAffColor] = useState(() => readSettings().affColor);
+  const [negColor, setNegColor] = useState(() => readSettings().negColor);
 
   // Find
   const [findOpen, setFindOpen] = useState(false);
@@ -629,11 +629,12 @@ export default function FlowView() {
   // ── Live-update default side colors when changed in Settings ────────────────
   useEffect(() => {
     function onColors() {
-      setAffColor(localStorage.getItem(AFF_COLOR_KEY) || DEFAULT_AFF_COLOR);
-      setNegColor(localStorage.getItem(NEG_COLOR_KEY) || DEFAULT_NEG_COLOR);
+      const s = readSettings();
+      setAffColor(s.affColor);
+      setNegColor(s.negColor);
     }
-    window.addEventListener('warroom-flow-colors-changed', onColors);
-    return () => window.removeEventListener('warroom-flow-colors-changed', onColors);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onColors);
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onColors);
   }, []);
 
   // ── Global shortcuts: find (⌘F), undo (⌘Z), redo (⌘⇧Z) ─────────────────────

@@ -7,6 +7,7 @@ import { humanizeGeminiError } from '../utils/geminiError';
 import { htmlToText } from '../lib/cellHtml';
 import { useDragActive } from '../hooks/useDragActive';
 import ProgressBar from './ProgressBar';
+import { readSettings } from '../platform/settings';
 import { readKey, writeKey } from '../platform/storage';
 import { openFiles, resolveDroppedFiles, fileNameOf } from '../platform/files';
 import { extractText } from '../platform/docx';
@@ -18,10 +19,6 @@ type Step = 'setup' | 'analyzing' | 'question' | 'result';
 // (or pro/con) column colors — read here too so the verdict banner and clash
 // cards use the SAME colors the debater already sees on their flow, rather than
 // a hardcoded pair that could clash with a customized palette.
-const AFF_COLOR_KEY = 'warroom-flow-aff-color';
-const NEG_COLOR_KEY = 'warroom-flow-neg-color';
-const DEFAULT_AFF_COLOR = '#2563eb';
-const DEFAULT_NEG_COLOR = '#16a34a';
 
 interface Verdict { leading: 'A' | 'B' | 'even'; reason: string }
 interface DroppedItem { side: 'A' | 'B'; argument: string; sheet: string }
@@ -228,8 +225,10 @@ export default function AnalyzeRound({
   const [cachedAt, setCachedAt] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
 
-  const affColor = useMemo(() => localStorage.getItem(AFF_COLOR_KEY) || DEFAULT_AFF_COLOR, []);
-  const negColor = useMemo(() => localStorage.getItem(NEG_COLOR_KEY) || DEFAULT_NEG_COLOR, []);
+  // Same store the grid reads, so the sides are the same two colours here as
+  // they are on the flow this is analyzing.
+  const affColor = useMemo(() => readSettings().affColor, []);
+  const negColor = useMemo(() => readSettings().negColor, []);
 
   const flowSummary = useMemo(() => buildFlowSummary(sheets, columns), [sheets, columns]);
 

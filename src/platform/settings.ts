@@ -36,8 +36,9 @@ export const DEFAULT_SETTINGS: Settings = {
   longInputAllowed: false,
   longInputMethod: 'sample',
   theme: 'system',
+  // These are the grid's own long-standing defaults: blue aff, green neg.
   affColor: '#2563eb',
-  negColor: '#dc2626',
+  negColor: '#16a34a',
 };
 
 const KEY = 'policyflow-settings';
