@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/appStore';
 import { listLmStudioModels, promptNames, promptSource } from '../platform/ai';
+import { aiConfigured } from '../platform/settings';
 import { createTransferCode, claimTransferCode } from '../platform/cloud';
 import { clearAll } from '../platform/storage';
 import Tooltip from './Tooltip';
@@ -58,9 +59,65 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         </Section>
 
         <Section
-          title="AI"
-          intro="Auto Flow reads your speech docs without any AI at all. A key adds the parts that need a model: sorting cards into tabs, card summaries, tab summaries on hover, and Analyze Round."
+          title="Moving to another browser"
+          intro="There are no accounts here, so your flows belong to this browser. Clearing site data or switching machines loses them unless you move them first — a transfer code hands every flow you own to another browser."
         >
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="btn h-8 px-3"
+              onClick={async () => {
+                const res = await createTransferCode();
+                if (res.ok) { setTransferCode(res.data); setTransferMsg(''); }
+                else setTransferMsg(res.error);
+              }}
+            >
+              Make a transfer code
+            </button>
+            {transferCode && (
+              <>
+                <code
+                  className="px-3 h-8 inline-flex items-center rounded-[9px] font-mono text-sm tracking-[0.16em]"
+                  style={{ background: 'var(--bg-nest)', border: '1px solid var(--border-med)' }}
+                >
+                  {transferCode}
+                </code>
+                <span className="text-xs" style={{ color: 'var(--label-color)' }}>
+                  Valid 30 minutes, usable once
+                </span>
+              </>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="input flex-1 font-mono text-sm tracking-[0.16em]"
+              placeholder="Paste a code from your other browser"
+              value={claimInput}
+              spellCheck={false}
+              onChange={(e) => setClaimInput(e.target.value)}
+            />
+            <button
+              className="btn px-3 shrink-0"
+              disabled={!claimInput.trim()}
+              onClick={async () => {
+                const res = await claimTransferCode(claimInput);
+                if (!res.ok) { setTransferMsg(res.error); return; }
+                setTransferMsg(`${res.data} flow${res.data === 1 ? '' : 's'} moved here. Reload to see them.`);
+                setClaimInput('');
+              }}
+            >
+              Redeem
+            </button>
+          </div>
+          {transferMsg && <p className="text-sm">{transferMsg}</p>}
+        </Section>
+
+        {/* AI and its prompts fold away together: most sessions never touch
+            either, and open they were over half the page. */}
+        <CollapsibleSection
+          title="AI"
+          summary={aiConfigured(settings) ? `${settings.provider === 'gemini' ? 'Gemini' : 'LM Studio'} · connected` : 'No key set — Auto Flow still reads docs'}
+        >
+
           <Row label="Provider">
             <Segmented
               value={settings.provider}
@@ -180,9 +237,11 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </div>
-        </Section>
 
-        <Section title="Prompts" intro="Exactly what gets sent to the model, for every AI feature here.">
+          <div className="divider pt-4 flex flex-col gap-2">
+            <h3 className="label">Prompts</h3>
+            <p className="text-sm">Exactly what gets sent to the model, for every AI feature here.</p>
+
           <div className="flex flex-col">
             {promptNames().map((n, i) => (
               <div key={n} className={i > 0 ? 'divider' : ''}>
@@ -206,60 +265,8 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               </div>
             ))}
           </div>
-        </Section>
-
-        <Section
-          title="Moving to another browser"
-          intro="There are no accounts here, so your flows belong to this browser. Clearing site data or switching machines loses them unless you move them first — a transfer code hands every flow you own to another browser."
-        >
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              className="btn h-8 px-3"
-              onClick={async () => {
-                const res = await createTransferCode();
-                if (res.ok) { setTransferCode(res.data); setTransferMsg(''); }
-                else setTransferMsg(res.error);
-              }}
-            >
-              Make a transfer code
-            </button>
-            {transferCode && (
-              <>
-                <code
-                  className="px-3 h-8 inline-flex items-center rounded-[9px] font-mono text-sm tracking-[0.16em]"
-                  style={{ background: 'var(--bg-nest)', border: '1px solid var(--border-med)' }}
-                >
-                  {transferCode}
-                </code>
-                <span className="text-xs" style={{ color: 'var(--label-color)' }}>
-                  Valid 30 minutes, usable once
-                </span>
-              </>
-            )}
           </div>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1 font-mono text-sm tracking-[0.16em]"
-              placeholder="Paste a code from your other browser"
-              value={claimInput}
-              spellCheck={false}
-              onChange={(e) => setClaimInput(e.target.value)}
-            />
-            <button
-              className="btn px-3 shrink-0"
-              disabled={!claimInput.trim()}
-              onClick={async () => {
-                const res = await claimTransferCode(claimInput);
-                if (!res.ok) { setTransferMsg(res.error); return; }
-                setTransferMsg(`${res.data} flow${res.data === 1 ? '' : 's'} moved here. Reload to see them.`);
-                setClaimInput('');
-              }}
-            >
-              Redeem
-            </button>
-          </div>
-          {transferMsg && <p className="text-sm">{transferMsg}</p>}
-        </Section>
+        </CollapsibleSection>
 
         <Section title="Clear local data" danger>
           <p className="text-sm leading-relaxed">
@@ -283,6 +290,44 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         </Section>
       </div>
     </div>
+  );
+}
+
+/**
+ * A section that folds away, with the state of what's inside summarised on the
+ * closed header — so collapsing it doesn't also hide whether a key is set.
+ */
+function CollapsibleSection({ title, summary, children }: {
+  title: string;
+  summary?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section
+      className="rounded-[13px] border"
+      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', boxShadow: 'var(--shadow-card)' }}
+    >
+      <button
+        className="btn-icon w-full flex items-center gap-3 px-5 py-4 text-left"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="label">{title}</span>
+        {summary && !open && (
+          <span className="text-xs truncate" style={{ color: 'var(--label-color)' }}>{summary}</span>
+        )}
+        <span className="flex-1" />
+        <svg
+          width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+          style={{ color: 'var(--ink-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && <div className="px-5 pb-5 flex flex-col gap-3.5">{children}</div>}
+    </section>
   );
 }
 
