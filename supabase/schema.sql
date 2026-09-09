@@ -233,3 +233,12 @@ revoke all on function pf_create_transfer() from public;
 revoke all on function pf_claim_transfer(text) from public;
 grant execute on function pf_create_transfer() to authenticated;
 grant execute on function pf_claim_transfer(text) to authenticated;
+
+-- Supabase grants EXECUTE on new public functions to `anon` and `authenticated`
+-- by default, and `revoke ... from public` does NOT remove a grant held by a
+-- named role. All three functions already raise on a null auth.uid(), so this
+-- was never reachable — but a not-signed-in caller should be turned away by the
+-- grant, not by a check inside the function body.
+revoke execute on function pf_join_flow(text) from anon;
+revoke execute on function pf_create_transfer() from anon;
+revoke execute on function pf_claim_transfer(text) from anon;
