@@ -88,10 +88,14 @@ export default function App() {
     return () => window.removeEventListener('pagehide', onHide);
   }, []);
 
-  if (!booted) return <div className="min-h-screen" style={{ background: 'var(--bg-main)' }} />;
+  if (!booted) return <div className="h-screen" style={{ background: 'var(--bg-main)' }} />;
 
+  // h-screen, not min-h-screen: the flow editor's tab bar is the last child of a
+  // full-height column, so it only pins to the bottom of the window if that
+  // column has a DEFINITE height. Under min-h-screen it sat below the fold,
+  // after however tall the grid happened to be.
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg-main)' }}>
+    <div className="h-screen flex flex-col overflow-hidden" style={{ background: 'var(--bg-main)' }}>
       <TopBar
         inFlow={view.kind === 'flow'}
         onHome={() => setView({ kind: 'home' })}
@@ -105,9 +109,11 @@ export default function App() {
         </div>
       )}
 
-      {view.kind === 'home' && <Home onAutoFlow={() => setAutoFlowOpen(true)} />}
-      {view.kind === 'settings' && <Settings onClose={() => setView({ kind: 'home' })} />}
-      {view.kind === 'flow' && <FlowView />}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {view.kind === 'home' && <Home onAutoFlow={() => setAutoFlowOpen(true)} />}
+        {view.kind === 'settings' && <Settings onClose={() => setView({ kind: 'home' })} />}
+        {view.kind === 'flow' && <FlowView />}
+      </div>
 
       {autoFlowOpen && <AutoFlow onClose={() => setAutoFlowOpen(false)} />}
       <TruncationConfirm />

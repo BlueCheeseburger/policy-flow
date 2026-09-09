@@ -61,7 +61,24 @@ export const SHEETS_STOCK_ISSUES = ['Inherency', 'Harms', 'Solvency', 'Off 1', '
 export const SHEETS_ADVANTAGE = ['Adv 1', 'Adv 2', 'Adv 3', 'Off 1', 'Off 2', 'Off 3', 'Off 4'];
 export const SHEETS_PF = ['Contention 1', 'Contention 2', 'Turns', 'Off 1', 'Off 2'];
 
-export const NUM_ROWS = 60;
+/**
+ * How many rows a new flow starts with. Rows are growable per flow now (see
+ * `numRows` on StoredFlowData), so this is only the starting point — never the
+ * limit. Anything reasoning about an EXISTING flow must read that flow's own
+ * count and fall back to this, because flows made before rows grew have no
+ * field to read.
+ */
+export const DEFAULT_ROWS = 60;
+
+/** @deprecated Prefer a flow's own `numRows`, falling back to DEFAULT_ROWS. */
+export const NUM_ROWS = DEFAULT_ROWS;
+
+/**
+ * Ceiling on a single flow's rows. Every row renders its own cells for all
+ * seven columns, so this is a rendering budget, not a data one — and it also
+ * bounds what a corrupt or hand-edited stored count can ask the grid to draw.
+ */
+export const MAX_ROWS = 5000;
 const DEFAULT_COL_WIDTH = 185;
 const DEFAULT_FONT_SIZE = 13;
 
@@ -129,6 +146,10 @@ export interface StoredFlowData {
   columnColors?: (string | null)[];
   fontSize: number;
   zoom: number;
+  // How many rows this flow has. Absent on every flow made before rows became
+  // growable, which is why every read falls back to DEFAULT_ROWS rather than
+  // trusting the field to be there.
+  numRows?: number;
   // Which tab was open, so reopening the flow (or relaunching the app) lands
   // back where you left off — see the session-restore work. Distinct from
   // FlowSnapshot below (the undo stack), which deliberately excludes this:
@@ -146,6 +167,9 @@ interface FlowSnapshot {
   variant: PolicyVariant;
   pfOrder: PFOrder;
   event: 'policy' | 'pf';
+  // Row count is part of the document: adding rows is undoable, and undoing
+  // back past the addition must not leave cells stranded below the new end.
+  numRows: number;
 }
 
 const COLOR_SWATCHES = ['#2563eb', '#16a34a', '#dc2626', '#d97706', '#9333ea', '#0891b2', '#db2777', '#475569'];
@@ -255,6 +279,10 @@ export default function FlowView() {
   const [zoom, setZoom] = useState(100);
   const [variant, setVariant] = useState<PolicyVariant>('stock-issues');
   const [pfOrder, setPfOrder] = useState<PFOrder>('pro-first');
+  const [numRows, setNumRows] = useState<number>(DEFAULT_ROWS);
+  // What the "add rows" field is set to. Google Sheets defaults this to 100 and
+  // debaters coming from it expect the same number sitting there.
+  const [addRowsCount, setAddRowsCount] = useState('100');
 
   // Default side colors, straight from Settings. These used to be read from
   // two standalone localStorage keys that nothing in this app ever wrote — a
@@ -418,8 +446,8 @@ export default function FlowView() {
   // fired by the tab switch — still read the OLD sheet's arrows and drew them
   // over the new tab's cells, where they sat until something else happened to
   // trigger a recompute. That was "arrows follow me between tabs".
-  const snap = useRef({ sheets, columnWidths, customColumns, columnColors, fontSize, zoom, variant, pfOrder, activeSheetIdx, event: 'policy' as 'policy' | 'pf' });
-  useLayoutEffect(() => { snap.current = { sheets, columnWidths, customColumns, columnColors, fontSize, zoom, variant, pfOrder, activeSheetIdx, event: flowEvent }; });
+  const snap = useRef({ sheets, columnWidths, customColumns, columnColors, fontSize, zoom, variant, pfOrder, activeSheetIdx, numRows, event: 'policy' as 'policy' | 'pf' });
+  useLayoutEffect(() => { snap.current = { sheets, columnWidths, customColumns, columnColors, fontSize, zoom, variant, pfOrder, activeSheetIdx, numRows, event: flowEvent }; });
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -501,6 +529,8 @@ export default function FlowView() {
 
         setVariant(v);
         setPfOrder(pfo);
+        // Clamped: a corrupt or hand-edited count must not render a million rows.
+        setNumRows(Math.max(DEFAULT_ROWS, Math.min(MAX_ROWS, Number(data.numRows) || DEFAULT_ROWS)));
         setSheets(loadedSheets);
         setColumnWidths(
           data.columnWidths?.length === colCount
@@ -739,6 +769,7 @@ export default function FlowView() {
       columnColors: s.columnColors,
       fontSize: s.fontSize,
       zoom: s.zoom,
+      numRows: s.numRows,
       activeSheetIdx: s.activeSheetIdx,
       ...overrides,
     } as StoredFlowData;
@@ -798,6 +829,7 @@ export default function FlowView() {
       meta.set('pfOrder', data.pfOrder);
       meta.set('fontSize', data.fontSize);
       meta.set('zoom', data.zoom);
+      meta.set('numRows', data.numRows ?? DEFAULT_ROWS);
       meta.set('customColumns', data.customColumns ?? null);
       meta.set('columnWidths', data.columnWidths);
       meta.set('columnColors', data.columnColors ?? []);
@@ -854,7 +886,7 @@ export default function FlowView() {
     }));
     return {
       event: flowEvent,
-      variant: s.variant, pfOrder: s.pfOrder, sheets,
+      variant: s.variant, pfOrder: s.pfOrder, sheets, numRows: s.numRows,
       columnWidths: [...s.columnWidths], customColumns: s.customColumns ? [...s.customColumns] : null,
       columnColors: [...s.columnColors], fontSize: s.fontSize, zoom: s.zoom,
     };
@@ -876,6 +908,7 @@ export default function FlowView() {
       setCustomColumns(data.customColumns);
       setColumnColors(data.columnColors?.length === colCount ? data.columnColors : (data.customColumns ?? cols).map(() => null));
       setFontSize(data.fontSize);
+      setNumRows(data.numRows ?? DEFAULT_ROWS);
       // Zoom is deliberately NOT adopted from the shared doc. It's a per-viewer
       // fit to your own window, and the grid auto-fits on every container resize
       // — so applying a teammate's zoom would start a feedback loop: they fit to
@@ -1040,6 +1073,7 @@ export default function FlowView() {
       variant: s.variant,
       pfOrder: s.pfOrder,
       event: s.event,
+      numRows: s.numRows,
     };
   }
 
@@ -1066,12 +1100,13 @@ export default function FlowView() {
     setColumnColors(s.columnColors);
     setVariant(s.variant);
     setPfOrder(s.pfOrder);
+    setNumRows(s.numRows);
     setSheets(s.sheets);
     setActiveSheetIdx(idx);
     cellsRef.current = { ...(s.sheets[idx]?.cells ?? {}) }; cellsOwnerId.current = s.sheets[idx]?.id ?? null;
     dirtyKeys.current.clear();
-    snap.current = { ...snap.current, sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, activeSheetIdx: idx, variant: s.variant, pfOrder: s.pfOrder };
-    persist({ sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, variant: s.variant, pfOrder: s.pfOrder, event: s.event });
+    snap.current = { ...snap.current, sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, activeSheetIdx: idx, variant: s.variant, pfOrder: s.pfOrder, numRows: s.numRows };
+    persist({ sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, variant: s.variant, pfOrder: s.pfOrder, event: s.event, numRows: s.numRows });
     setCellNonce((n) => n + 1);
     requestAnimationFrame(recomputeArrows);
     setTimeout(() => { restoring.current = false; }, 0);
@@ -1341,7 +1376,7 @@ export default function FlowView() {
       e.preventDefault();
       const dir = e.key === 'ArrowDown' ? 'down' : 'up';
       const t = dir === 'down' ? ri + 1 : ri - 1;
-      if (t < 0 || t >= NUM_ROWS) return;
+      if (t < 0 || t >= numRows) return;
       moveCell(ri, ci, dir);
       focusCell(`${t}-${ci}`);
       return;
@@ -1352,14 +1387,14 @@ export default function FlowView() {
       e.preventDefault();
       const next = e.shiftKey ? ci - 1 : ci + 1;
       if (next >= 0 && next < columns.length) focusCell(`${ri}-${next}`);
-      else if (!e.shiftKey && ri < NUM_ROWS - 1) focusCell(`${ri + 1}-0`);
+      else if (!e.shiftKey && ri < numRows - 1) focusCell(`${ri + 1}-0`);
     } else if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault();
       document.execCommand('insertLineBreak');
       noteCellEdit(`${ri}-${ci}`, el.innerHTML);
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (ri < NUM_ROWS - 1) focusCell(`${ri + 1}-${ci}`, 'start');
+      if (ri < numRows - 1) focusCell(`${ri + 1}-${ci}`, 'start');
     // Up / Down move a line within the cell, and only leave it once there is no
     // line left to go to. Left / Right move the caret through the text, and
     // only step to the neighbouring column once the caret is already at the
@@ -1369,7 +1404,7 @@ export default function FlowView() {
     } else if (e.key === 'ArrowUp') {
       if (!e.shiftKey && ri > 0 && caretOnEdgeLine(el, 'first')) { e.preventDefault(); focusCell(`${ri - 1}-${ci}`); }
     } else if (e.key === 'ArrowDown') {
-      if (!e.shiftKey && ri < NUM_ROWS - 1 && caretOnEdgeLine(el, 'last')) { e.preventDefault(); focusCell(`${ri + 1}-${ci}`, 'start'); }
+      if (!e.shiftKey && ri < numRows - 1 && caretOnEdgeLine(el, 'last')) { e.preventDefault(); focusCell(`${ri + 1}-${ci}`, 'start'); }
     } else if (e.key === 'ArrowLeft') {
       if (!e.shiftKey && ci > 0 && caretAtTextEdge(el, 'start')) { e.preventDefault(); focusCell(`${ri}-${ci - 1}`, 'end'); }
     } else if (e.key === 'ArrowRight') {
@@ -1434,9 +1469,9 @@ export default function FlowView() {
    */
   function moveSelection(dRow: number, dCol: number) {
     const sel = selectionRef.current;
-    const plan = planMove(sel, dRow, dCol, NUM_ROWS, columns.length);
+    const plan = planMove(sel, dRow, dCol, numRows, columns.length);
     if (!plan) return;
-    const res = applyMove(cellsRef.current, plan, NUM_ROWS);
+    const res = applyMove(cellsRef.current, plan, numRows);
     if (!res) return;
     // The moved cells keep their arrows' fate: dropped. Displaced cells keep
     // theirs: remapped. `shifted` never names a destination row, since the
@@ -1531,9 +1566,9 @@ export default function FlowView() {
     const sameSheet = d.originSheetId === cellsOwnerId.current;
 
     if (sameSheet) {
-      const plan = planDrop({ col: d.col, rows: d.rows }, d.grabRow, targetRow, targetCol, NUM_ROWS, columns.length);
+      const plan = planDrop({ col: d.col, rows: d.rows }, d.grabRow, targetRow, targetCol, numRows, columns.length);
       if (!plan) return;
-      const res = applyMove(cellsRef.current, plan, NUM_ROWS);
+      const res = applyMove(cellsRef.current, plan, numRows);
       if (!res) return; // no room below to absorb what's already there
       writeCells(res.cells, { remap: res.shifted, dropArrows: plan.touched });
       setSelection(plan.next);
@@ -1544,13 +1579,13 @@ export default function FlowView() {
     // Landed on a different tab. Two sheets change: the cells arrive here, and
     // they leave the sheet they came from. Both sheets lose the arrows that
     // pointed at the cells involved.
-    const shift = Math.max(-d.rows[0], Math.min(targetRow - d.grabRow, NUM_ROWS - 1 - d.rows[d.rows.length - 1]));
+    const shift = Math.max(-d.rows[0], Math.min(targetRow - d.grabRow, numRows - 1 - d.rows[d.rows.length - 1]));
     const rows = d.rows.map((r) => r + shift);
     const gone = new Set(d.rows.map((r) => selCellKey(r, d.col)));
 
     // Insert into THIS sheet, sliding its existing cells down, exactly as a
     // same-sheet move does.
-    const res = applyPaste(cellsRef.current, targetCol, rows, d.payload, NUM_ROWS);
+    const res = applyPaste(cellsRef.current, targetCol, rows, d.payload, numRows);
     if (!res) return;
     const owner = cellsOwnerId.current;
     const prev = cellsRef.current;
@@ -1626,7 +1661,7 @@ export default function FlowView() {
 
       const at = cellAtPoint(e.clientX, e.clientY);
       if (!at) { setDropAt(null); return; }
-      const shift = Math.max(-d.rows[0], Math.min(at.ri - d.grabRow, NUM_ROWS - 1 - d.rows[d.rows.length - 1]));
+      const shift = Math.max(-d.rows[0], Math.min(at.ri - d.grabRow, numRows - 1 - d.rows[d.rows.length - 1]));
       setDropAt({ col: at.ci, rows: d.rows.map((r) => r + shift) });
     }
     function onUp(e: MouseEvent) {
@@ -1692,9 +1727,9 @@ export default function FlowView() {
    * one rule for every kind of move beats two rules that disagree.
    */
   function moveCell(ri: number, ci: number, dir: 'up' | 'down') {
-    const plan = planMove({ col: ci, rows: [ri] }, dir === 'up' ? -1 : 1, 0, NUM_ROWS, columns.length);
+    const plan = planMove({ col: ci, rows: [ri] }, dir === 'up' ? -1 : 1, 0, numRows, columns.length);
     if (!plan) return;
-    const res = applyMove(cellsRef.current, plan, NUM_ROWS);
+    const res = applyMove(cellsRef.current, plan, numRows);
     if (!res) return;
     writeCells(res.cells, { remap: res.shifted, dropArrows: plan.touched });
   }
@@ -1705,10 +1740,10 @@ export default function FlowView() {
   // slot a missed argument into one speech's column without disturbing the others.
   function insertRowBetween(afterRi: number, ci: number) {
     const insertAt = afterRi + 1;
-    if (insertAt >= NUM_ROWS) return;
+    if (insertAt >= numRows) return;
     // Shift bottom-up so we never overwrite a source before copying it.
     const cells = { ...cellsRef.current };
-    for (let r = NUM_ROWS - 1; r > insertAt; r--) {
+    for (let r = numRows - 1; r > insertAt; r--) {
       const src = cells[`${r - 1}-${ci}`];
       if (src !== undefined) cells[`${r}-${ci}`] = src; else delete cells[`${r}-${ci}`];
     }
@@ -1718,7 +1753,7 @@ export default function FlowView() {
     // Move arrow endpoints in this column at/below the insert point down with it.
     const bump = (key: string) => {
       const [rs, cs] = key.split('-'); const r = Number(rs), c = Number(cs);
-      if (c === ci && r >= insertAt && r < NUM_ROWS - 1) return `${r + 1}-${c}`;
+      if (c === ci && r >= insertAt && r < numRows - 1) return `${r + 1}-${c}`;
       return key;
     };
     // By owner id, not index — an index that hasn't caught up with a tab switch
@@ -1740,7 +1775,7 @@ export default function FlowView() {
     persist({ sheets: updated });
     recordHistory();
     if (liveRef.current) {
-      for (let r = insertAt; r < NUM_ROWS; r++) pushLiveCell(`${r}-${ci}`, cellToHtml(cells[`${r}-${ci}`] ?? ''));
+      for (let r = insertAt; r < numRows; r++) pushLiveCell(`${r}-${ci}`, cellToHtml(cells[`${r}-${ci}`] ?? ''));
     }
     setCellNonce((n) => n + 1);
     requestAnimationFrame(recomputeArrows);
@@ -2488,6 +2523,28 @@ export default function FlowView() {
     );
   }
 
+  /**
+   * Grow the grid. Rows are only ever added at the BOTTOM, so nothing already
+   * on the flow moves — no cell key changes, and no arrow needs remapping,
+   * which is what makes this safe to do mid-round.
+   */
+  function addRows(count: number) {
+    const n = Math.floor(Number(count));
+    if (!Number.isFinite(n) || n < 1) return;
+    const next = Math.min(MAX_ROWS, numRows + n);
+    if (next === numRows) return;
+    setNumRows(next);
+    // snap.current is refreshed by a layout effect, i.e. after this returns —
+    // so update it by hand before recording, exactly as changeVariant and
+    // insertRowBetween do. recordHistory() goes LAST: this file's convention is
+    // to snapshot the state AFTER a change, and recording before it instead
+    // makes undo land a step off (adding 5 twice, then undoing once, jumped
+    // straight past the intermediate count).
+    snap.current = { ...snap.current, numRows: next };
+    persist({ numRows: next });
+    recordHistory();
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   const flowHasContent = flowHasAnyContent();
@@ -2969,7 +3026,7 @@ export default function FlowView() {
           </div>
 
           {/* Data rows */}
-          {Array.from({ length: NUM_ROWS }, (_, ri) => (
+          {Array.from({ length: numRows }, (_, ri) => (
             <div key={ri} style={{ display: 'grid', gridTemplateColumns: gridTemplate }}>
               {columns.map((_, ci) => {
                 const cellKey = `${ri}-${ci}`;
@@ -3053,7 +3110,7 @@ export default function FlowView() {
                             >▲</button>
                           </Tooltip>
                         )}
-                        {ri < NUM_ROWS - 1 && (
+                        {ri < numRows - 1 && (
                           <Tooltip text="Move down (⌘↓)">
                             <button
                               onMouseDown={(e) => e.preventDefault()}
@@ -3071,7 +3128,7 @@ export default function FlowView() {
                     )}
                     {/* Insert-row "+" — thin hover strip straddling the bottom border line itself,
                         independent of the cell's own hover state (which drives the move buttons above). */}
-                    {!drawMode && ri < NUM_ROWS - 1 && (
+                    {!drawMode && ri < numRows - 1 && (
                       <div
                         className="absolute left-0 right-0"
                         style={{ bottom: -6, height: 12, zIndex: 6, pointerEvents: 'auto' }}
@@ -3104,6 +3161,41 @@ export default function FlowView() {
               })}
             </div>
           ))}
+
+          {/* Grow the grid, the way a spreadsheet does — pinned under the last
+              row and scrolling with the content, not floating over it. */}
+          <div
+            className="flex items-center gap-2 px-3 text-xs sticky left-0"
+            style={{ height: 34, color: 'var(--ink-muted)', width: 'fit-content' }}
+          >
+            <button
+              className="btn-icon font-semibold px-1"
+              style={{ color: 'var(--accent)' }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addRows(Number(addRowsCount) || 0)}
+              disabled={numRows >= MAX_ROWS}
+            >
+              Add
+            </button>
+            <input
+              className="input text-xs text-center"
+              style={{ width: 62, padding: '2px 6px' }}
+              value={addRowsCount}
+              inputMode="numeric"
+              aria-label="How many rows to add"
+              onChange={(e) => setAddRowsCount(e.target.value.replace(/[^0-9]/g, '').slice(0, 4))}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                addRows(Number(addRowsCount) || 0);
+              }}
+            />
+            <span>
+              {numRows >= MAX_ROWS
+                ? `more rows at the bottom — ${MAX_ROWS.toLocaleString()} is the limit`
+                : 'more rows at the bottom'}
+            </span>
+          </div>
         </div>
       </div>
       </div>

@@ -39,6 +39,8 @@ export interface FlowDocData {
   columnColors: (string | null)[];
   fontSize: number;
   zoom: number;
+  /** Optional: flows created before rows became growable carry no count. */
+  numRows?: number;
 }
 
 export function metaMap(doc: Y.Doc): Y.Map<any> { return doc.getMap('meta'); }
@@ -104,6 +106,7 @@ export function seedDoc(doc: Y.Doc, data: FlowDocData, cellToHtml: (v: string) =
     meta.set('pfOrder', data.pfOrder);
     meta.set('fontSize', data.fontSize);
     meta.set('zoom', data.zoom);
+    meta.set('numRows', data.numRows ?? 60);
     meta.set('customColumns', data.customColumns);
     meta.set('columnWidths', data.columnWidths);
     meta.set('columnColors', data.columnColors);
@@ -154,6 +157,7 @@ export function docToData(doc: Y.Doc): FlowDocData | null {
     columnColors: meta.get('columnColors') ?? [],
     fontSize: meta.get('fontSize') ?? 13,
     zoom: meta.get('zoom') ?? 100,
+    numRows: meta.get('numRows') ?? 60,
   };
 }
 
