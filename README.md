@@ -38,6 +38,19 @@ dashboard (Authentication → Sign In / Providers), and `supabase/schema.sql`
 applied. Without either, the app still runs: flows save locally and everything
 except sharing works.
 
+## Deploying
+
+Import the repo on Vercel; the Vite preset is auto-detected and needs no
+`vercel.json`. Routing is hash-based (`#/join/<token>`), so there are no
+rewrites to configure either.
+
+Set both `VITE_SUPABASE_*` variables in the Vercel project **before** the first
+build. Vite inlines `import.meta.env` at build time, not at runtime — a build
+that runs without them produces a bundle with no Supabase config baked in, and
+the deployed app silently runs in local-only mode until you redeploy. That is
+by design (the app is meant to work offline), which is exactly why it fails
+quietly rather than visibly.
+
 ## How it is put together
 
 ```
