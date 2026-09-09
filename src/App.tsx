@@ -96,11 +96,11 @@ export default function App() {
   // after however tall the grid happened to be.
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ background: 'var(--bg-main)' }}>
-      <TopBar
-        inFlow={view.kind === 'flow'}
-        onHome={() => setView({ kind: 'home' })}
-        onSettings={() => setView({ kind: 'settings' })}
-      />
+      {/* The flow editor draws its own bar — logo, name, tools, settings — so a
+          second one above it would be 52px of duplicated chrome. */}
+      {view.kind !== 'flow' && (
+        <TopBar onHome={() => setView({ kind: 'home' })} onSettings={() => setView({ kind: 'settings' })} />
+      )}
 
       {joinError && (
         <div className="px-4 py-2 text-sm flex items-center justify-between" style={{ background: 'color-mix(in srgb, var(--warn) 14%, var(--bg-main))' }} role="alert">
@@ -122,15 +122,15 @@ export default function App() {
   );
 }
 
-function TopBar({ inFlow, onHome, onSettings }: { inFlow: boolean; onHome: () => void; onSettings: () => void }) {
+function TopBar({ onHome, onSettings }: { onHome: () => void; onSettings: () => void }) {
   return (
     <div
       className="h-11 shrink-0 flex items-center gap-3 px-4 border-b"
       style={{ borderColor: 'var(--border-subtle)' }}
     >
-      <button className="btn-icon flex items-center gap-2 font-semibold text-sm" onClick={onHome} title={inFlow ? 'Back to your flows' : 'Policy Flow'}>
+      <button className="btn-icon flex items-center gap-2 font-semibold text-sm" onClick={onHome} title="Policy Flow">
         <Logo size={20} />
-        <span>{inFlow ? '← Flows' : 'Policy Flow'}</span>
+        <span>Policy Flow</span>
       </button>
       <div className="flex-1" />
       <button className="btn-icon text-sm" onClick={onSettings} title="Settings">Settings</button>
