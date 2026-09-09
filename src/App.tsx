@@ -6,6 +6,7 @@ import Settings from './components/Settings';
 import AutoFlow from './components/AutoFlow';
 import UndoToasts from './components/UndoToasts';
 import TruncationConfirm from './components/TruncationConfirm';
+import Logo from './components/Logo';
 import { readKey, writeKey, flushWrites } from './platform/storage';
 import { getIdentity, cloudConfigured } from './platform/supabase';
 import { joinFlow } from './platform/cloud';
@@ -121,8 +122,9 @@ function TopBar({ inFlow, onHome, onSettings }: { inFlow: boolean; onHome: () =>
       className="h-11 shrink-0 flex items-center gap-3 px-4 border-b"
       style={{ borderColor: 'var(--border-subtle)' }}
     >
-      <button className="btn-icon font-semibold text-sm" onClick={onHome}>
-        {inFlow ? '← Flows' : 'Policy Flow'}
+      <button className="btn-icon flex items-center gap-2 font-semibold text-sm" onClick={onHome} title={inFlow ? 'Back to your flows' : 'Policy Flow'}>
+        <Logo size={20} />
+        <span>{inFlow ? '← Flows' : 'Policy Flow'}</span>
       </button>
       <div className="flex-1" />
       <button className="btn-icon text-sm" onClick={onSettings} title="Settings">Settings</button>
