@@ -1,4 +1,11 @@
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+<!--
+  Just the mark: three stripes, transparent behind them.
+
+  Square viewBox because favicons are rendered square — the mark's own box is
+  272x168, so it sits centred with 52 units of clear space above and below
+  rather than being stretched to fill.
+-->
+<svg width="272" height="272" viewBox="0 0 272 272" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="s" x1="0" y1="1" x2="1" y2="0" gradientUnits="objectBoundingBox">
       <stop offset="0%"   stop-color="#88CCFF"/>
@@ -9,28 +16,10 @@
       <stop offset="88%"  stop-color="#CC66FF"/>
       <stop offset="100%" stop-color="#DDAAFF"/>
     </linearGradient>
-    <radialGradient id="bg" cx="50%" cy="22%" r="95%" gradientUnits="userSpaceOnUse">
-      <stop offset="0%"   stop-color="#43464C"/>
-      <stop offset="48%"  stop-color="#24262B"/>
-      <stop offset="100%" stop-color="#121317"/>
-    </radialGradient>
-    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#D2D7DE"/>
-      <stop offset="12%"  stop-color="#A6ACB5"/>
-      <stop offset="50%"  stop-color="#62666D"/>
-      <stop offset="100%" stop-color="#393C42"/>
-    </linearGradient>
-    <clipPath id="c"><rect width="512" height="512" rx="112"/></clipPath>
   </defs>
-  <g clip-path="url(#c)">
-    <rect width="512" height="512" fill="url(#bg)"/>
-    <g transform="translate(256 256) scale(0.84) translate(-256 -256)">
-      <g stroke="url(#s)" stroke-width="48" stroke-linecap="round" fill="none">
-        <line x1="144" y1="316" x2="220" y2="196"/>
-        <line x1="218" y1="316" x2="294" y2="196"/>
-        <line x1="292" y1="316" x2="368" y2="196"/>
-      </g>
-    </g>
-    <rect width="512" height="512" rx="112" fill="none" stroke="url(#rim)" stroke-width="7"/>
+  <g transform="translate(0 52)" stroke="url(#s)" stroke-width="48" stroke-linecap="round">
+    <line x1="24"  y1="144" x2="100" y2="24"/>
+    <line x1="98"  y1="144" x2="174" y2="24"/>
+    <line x1="172" y1="144" x2="248" y2="24"/>
   </g>
 </svg>
