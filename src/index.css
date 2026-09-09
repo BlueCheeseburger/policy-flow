@@ -213,6 +213,22 @@ html.dark {
   --settings-active-bg: rgba(124,130,238,0.18);
 }
 
+/* ── Base ─────────────────────────────────────────────────────────────────────
+   The app's inherited text colour and typeface. Everything that does NOT set a
+   colour of its own inherits from here, so losing this rule does not break the
+   layout or throw an error — it just silently falls back to the browser's black
+   on every surface, which is invisible in dark mode and fine in light. Keep it. */
+html, body, #root {
+  height: 100%;
+  background: var(--bg-main);
+  margin: 0;
+}
+body {
+  font-family: var(--font-text), -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: rgb(var(--ink-rgb));
+}
+
 /* ── Glass surfaces ──────────────────────────────────────────────────────── */
 :root {
   --glass-blur:     22px;
