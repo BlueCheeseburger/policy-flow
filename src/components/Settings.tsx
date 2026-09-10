@@ -192,11 +192,11 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           {transferMsg && <p className="text-sm">{transferMsg}</p>}
         </Section>
 
-        {/* AI and its prompts fold away together: most sessions never touch
-            either, and open they were over half the page. */}
-        <CollapsibleSection
+        <Section
           title="AI"
-          summary={aiConfigured(settings) ? `${settings.provider === 'gemini' ? 'Gemini' : 'LM Studio'} · connected` : 'No key set — Auto Flow still reads docs'}
+          intro={aiConfigured(settings)
+            ? `${settings.provider === 'gemini' ? 'Gemini' : 'LM Studio'} · connected`
+            : 'No key set — Auto Flow still reads docs'}
         >
 
           <Row label="Provider">
@@ -363,7 +363,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           </div>
-        </CollapsibleSection>
+        </Section>
 
         <Section title="Clear local data" danger>
           <p className="text-sm leading-relaxed">
@@ -501,44 +501,6 @@ function Shortcuts() {
         </div>
       )}
     </div>
-  );
-}
-
-/**
- * A section that folds away, with the state of what's inside summarised on the
- * closed header — so collapsing it doesn't also hide whether a key is set.
- */
-function CollapsibleSection({ title, summary, children }: {
-  title: string;
-  summary?: string;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  // No card around this one: a border would give a disclosure the same weight as
-  // the sections that hold actual settings. The px-5 keeps its label on the same
-  // vertical line as the card headings above and below it.
-  return (
-    <section>
-      <button
-        className="btn-icon w-full flex items-center gap-3 px-5 py-3 text-left"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        <span className="label">{title}</span>
-        {summary && !open && (
-          <span className="text-xs truncate" style={{ color: 'var(--label-color)' }}>{summary}</span>
-        )}
-        <span className="flex-1" />
-        <svg
-          width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-          style={{ color: 'var(--ink-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-      {open && <div className="px-5 pb-5 flex flex-col gap-3.5">{children}</div>}
-    </section>
   );
 }
 
