@@ -2206,7 +2206,7 @@ export default function FlowView() {
   // same: fresh if the signature still matches, stale (and worth
   // regenerating) if not.
   async function ensureSheetSummary(idx: number) {
-    // Settings → Flow → "AI tab summaries on hover". Off = never call Warroom AI
+    // Settings → AI → "Summarise a tab when I hover it". Off = never call the model
     // from a hover, full stop — the tooltip just falls back to its free local
     // tag preview (see sheetSummary below). A previously-cached aiSummary from
     // before the toggle was flipped off still displays; this only stops NEW
@@ -2315,7 +2315,7 @@ export default function FlowView() {
     const eligible = wasAutoFlowed(sheet);
     const generating = eligible && generatingSummary.has(sheet.id);
     const aiLine = generating
-      ? '✨ Warroom AI is summarizing this tab…'
+      ? '✨ Summarizing this tab…'
       : (eligible && sheet.aiSummary?.trim() ? `✨ ${sheet.aiSummary.trim()}` : '');
     if (entries.length === 0) return aiLine || 'Empty';
     const seen = new Set<string>();
@@ -2422,7 +2422,7 @@ export default function FlowView() {
     if (!el) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver(() => {
-      // Read live, not once at mount — Settings → Flow's "Auto-fit columns"
+      // Read live, not once at mount — Settings → Appearance's "Auto-fit columns"
       // toggle should take effect on the very next resize, not just for flows
       // opened after the change.
       if (!readFlowPrefs().autoFitColumns) return;

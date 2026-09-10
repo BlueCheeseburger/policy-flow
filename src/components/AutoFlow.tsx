@@ -155,7 +155,8 @@ function sheetsForVariant(event: 'policy' | 'pf', variant: PolicyVariant): strin
 }
 
 // Builds the cell HTML for one card's tag+cite, honoring the user's Auto Flow tag
-// style (Settings → Flow & Auto Flow → Auto Flow tag style). Only bold/italic/underline are applied
+// style. There is no UI for it in this app, so it stays at its defaults —
+// see AUTOFLOW_STYLE_DEFAULTS. Only bold/italic/underline are applied
 // — color and fontSize are NOT, because a flow cell can't carry them (see the
 // comment in src/lib/autoFlowTagStyle.ts and src/lib/cellHtml.ts's
 // ALLOWED_STYLE_PROPS: no per-run color or font-size support in a cell, so
@@ -182,7 +183,7 @@ function buildCellHtml(tag: string, cite: string, summary?: string): string {
 // legible instead of being one spinner that could mean anything.
 const STAGES = [
   { i: 0, label: 'Reading your docs', what: 'pulling out every tag and cite' },
-  { i: 1, label: 'Sorting with Warroom AI', what: 'deciding the sheet and column for each card' },
+  { i: 1, label: 'Sorting with AI', what: 'deciding the sheet and column for each card' },
   { i: 2, label: 'Summarizing cards', what: 'only when summary mode is on' },
   { i: 3, label: 'Writing into the flow', what: 'placing cards and drawing answer arrows' },
 ] as const;
@@ -283,7 +284,9 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
   const [selectedFlowId, setSelectedFlowId] = useState<string>('');
   const [newEvent, setNewEvent] = useState<'policy' | 'pf'>('policy');
   const [newVariant, setNewVariant] = useState<PolicyVariant>('stock-issues');
-  const [newPfOrder, setNewPfOrder] = useState<PFOrder>('pro-first');
+  // Policy only, so there is no speech order to choose. Kept as a constant
+  // because the shared column/sheet helpers still take one.
+  const newPfOrder: PFOrder = 'pro-first';
   const [variantInferred, setVariantInferred] = useState(false);
   // Opt-in: replace each card's tag+cite with a short AI summary of the card
   // (built from tag + body), capped under the tagline's own word count. Off by
@@ -466,7 +469,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       }
       setStep('review');
     } catch (e: any) {
-      setError(humanizeGeminiError(e?.message) || e?.message || 'Warroom AI could not sort these cards.');
+      setError(humanizeGeminiError(e?.message) || e?.message || 'The model could not sort these cards.');
       setStep('target');
     } finally {
       setProgress(null);
@@ -502,7 +505,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       if (res.placements.length === 0) {
         throw new Error(
           'The parser couldn\'t place a single card — none of these docs had a recognisable speech label ' +
-          'on their headings or filenames. Switch to Warroom AI for these docs.',
+          'on their headings or filenames. Switch to AI sorting for these docs.',
         );
       }
       const list: Placement[] = res.placements.map((p) => ({ ...p, id: crypto.randomUUID(), removed: false }));
@@ -583,11 +586,11 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
     : null;
   const stageTitle = summarizing ? 'Summarizing cards'
     : engine === 'parser' ? 'Reading the documents'
-    : 'Sorting with Warroom AI';
+    : 'Sorting with AI';
   const stageDetail = progress && progress.cardsTotal > 0
     ? `Batch ${Math.min(progress.batchesDone + 1, progress.totalBatches)} of ${progress.totalBatches} · `
       + `${progress.cardsDone.toLocaleString()} of ${progress.cardsTotal.toLocaleString()} cards done`
-    : `Sending ${cardsBeingSorted.toLocaleString()} card${cardsBeingSorted === 1 ? '' : 's'} to Warroom AI…`;
+    : `Sending ${cardsBeingSorted.toLocaleString()} card${cardsBeingSorted === 1 ? '' : 's'} to the model…`;
   // Set by "Skip animation" — the replay loop checks it each frame and jumps
   // straight to the finished flow. A ref, not state: the loop reads it between
   // awaits and would never see a re-rendered value.
@@ -618,7 +621,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       // closed and no error anywhere. Never create a flow out of zero cards.
       if (accepted.length === 0) {
         throw new Error(
-          'Warroom AI didn\'t return a placement for a single card, so there\'s nothing to write — ' +
+          'The model didn\'t return a placement for a single card, so there\'s nothing to write — ' +
           'no flow was created. This is almost always a one-off; sorting again usually fixes it.',
         );
       }
@@ -939,7 +942,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
               </li>
             ))}
           </ul>
-          Re-running those docs with Warroom AI reads the taglines and splits them.{' '}
+          Re-running those docs with AI sorting reads the taglines and splits them.{' '}
         </>
       )}
       {parserNotes.skipped > 0 && (
@@ -981,7 +984,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
           {step === 'upload' && (
             <div className="space-y-4">
               <p className="text-sm text-ink/60">
-                Upload one or more speech docs (<code>.docx</code>). Warroom AI reads only the tags,
+                Upload one or more speech docs (<code>.docx</code>). The model reads only the tags,
                 cites, and heading structure — never the card bodies — and sorts each card into the
                 right column and sheet of a flow.
               </p>
@@ -1060,18 +1063,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
 
-              {targetMode === 'new' && newEvent === 'pf' && (
-                <div className="space-y-3 rounded-sm border border-line p-3">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-ink/55 font-medium">Speech order</label>
-                    <div className="flex gap-2">
-                      <button className={`btn text-xs flex-1 ${newPfOrder === 'pro-first' ? 'btn-primary' : ''}`} onClick={() => setNewPfOrder('pro-first')}>Pro first</button>
-                      <button className={`btn text-xs flex-1 ${newPfOrder === 'con-first' ? 'btn-primary' : ''}`} onClick={() => setNewPfOrder('con-first')}>Con first</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-              {/* Policy sheet layout (Stock issues vs. Advantage) has no UI — Warroom AI
+              {/* Policy sheet layout (Stock issues vs. Advantage) has no UI here — the sort
                   guesses it from the doc's hat/block structure (inferVariantFromHats,
                   run at extract time) and the classify step's own read of the cards.
                   newVariant/variantInferred stay wired, just not surfaced here. */}
@@ -1105,7 +1097,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                   {([
                     { id: 'parser' as const, title: 'Read the document', sub: 'Instant · no API call',
                       body: 'Uses the doc\u2019s own headings \u2014 the speech gives the column, the position gives the tab. No length limit, however big the file.' },
-                    { id: 'ai' as const, title: 'Warroom AI', sub: 'Slower · costs a call',
+                    { id: 'ai' as const, title: 'AI sorting', sub: 'Slower · costs a call',
                       body: 'Reads the taglines. Needed when a doc labels every off\u2011case block the same thing, so the headings don\u2019t say what the positions are.' },
                   ]).map((opt) => {
                     const on = engine === opt.id;
@@ -1140,9 +1132,9 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
               </div>
 
               {/* Opt-in AI summary mode. The ai-glow-ring marks it as an AI action
-                  — it adds a Warroom AI call and reads card bodies. A real switch
+                  — it adds an AI call and reads card bodies. A real switch
                   (not a plain checkbox) so the on/off state reads unambiguously.
-                  Hidden in parser mode: it is itself a Warroom AI call, and the
+                  Hidden in parser mode: it is itself an AI call, and the
                   point of that mode is not making one. */}
               {engine === 'ai' && (
               <div className="ai-glow-ring flex items-start gap-3 rounded-sm border border-line p-3">
@@ -1169,7 +1161,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                   />
                 </button>
                 <button type="button" className="text-left flex-1 cursor-pointer" onClick={() => setSummarize((v) => !v)}>
-                  <div className="text-xs font-medium text-ink/80">Summarize each card with Warroom AI</div>
+                  <div className="text-xs font-medium text-ink/80">Summarize each card with AI</div>
                   <div className="text-[11px] text-ink/45 mt-0.5 leading-snug">
                     Writes a short AI summary of each card — built from its tagline <em>and</em> its evidence, always
                     shorter than the tagline — instead of the tagline + cite. Reads card bodies and takes an extra
@@ -1247,7 +1239,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
 
               <p className="mt-4 text-[11px] text-ink/40 leading-relaxed">
                 Sorting a full case packet can take a few minutes — each batch is a separate request
-                to Warroom AI. Nothing is written to a flow until every card has been sorted.
+                to the model. Nothing is written to a flow until every card has been sorted.
               </p>
             </div>
           )}
@@ -1313,7 +1305,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
               ))}
               {placements.length === 0 && (
                 <div className="py-8 text-center space-y-3">
-                  <p className="text-sm text-ink/60">Warroom AI didn't place any of these cards.</p>
+                  <p className="text-sm text-ink/60">The model didn't place any of these cards.</p>
                   <p className="text-xs text-ink/45 max-w-md mx-auto">
                     Every card came back unusable — usually a one-off model hiccup rather than
                     anything wrong with your docs. Sorting again normally fixes it.
@@ -1330,7 +1322,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
           {step === 'live' && (
             <div className="space-y-2">
               <p className="text-xs text-ink/60">
-                Flowing your docs in. The tabs switch as Warroom AI moves between positions —
+                Flowing your docs in. The tabs switch as the sort moves between positions —
                 everything is already saved as it lands.
               </p>
             </div>
@@ -1386,11 +1378,11 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
             <>
               <button
                 className={`btn-primary text-sm ${engine === 'ai' ? 'ai-glow-ring' : ''}`}
-                title={engine === 'ai' ? 'Sort with Warroom AI' : 'Sort from the document'}
+                title={engine === 'ai' ? 'Sort with AI' : 'Sort from the document'}
                 disabled={totalCards === 0 || (targetMode === 'existing' && !selectedFlowId)}
                 onClick={confirmTarget}
               >
-                {engine === 'ai' ? 'Sort with Warroom AI →' : 'Sort from the document →'}
+                {engine === 'ai' ? 'Sort with AI →' : 'Sort from the document →'}
               </button>
               <button className="btn text-sm ml-auto" onClick={onClose}>Cancel</button>
             </>

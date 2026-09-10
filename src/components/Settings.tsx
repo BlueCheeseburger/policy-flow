@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../store/appStore';
 import { listLmStudioModels, promptNames, promptSource } from '../platform/ai';
 import { aiConfigured } from '../platform/settings';
+import { readFlowPrefs, writeFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
 import { createTransferCode, claimTransferCode } from '../platform/cloud';
 import { clearAll } from '../platform/storage';
 import Tooltip from './Tooltip';
@@ -17,6 +18,17 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [transferMsg, setTransferMsg] = useState('');
   const [showPrompt, setShowPrompt] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
+  // Flow defaults live in their own store (lib/flowPrefs) because FlowView and
+  // Home read them directly. Nothing in this app wrote them until now, which
+  // left every one of them frozen at its default — including the one below that
+  // silently spends an API call on hover.
+  const [flowPrefs, setFlowPrefs] = useState(readFlowPrefs);
+  function updateFlowPrefs(patch: Partial<ReturnType<typeof readFlowPrefs>>) {
+    const next = { ...flowPrefs, ...patch };
+    setFlowPrefs(next);
+    writeFlowPrefs(next);
+    window.dispatchEvent(new CustomEvent(FLOW_PREFS_CHANGED_EVENT, { detail: next }));
+  }
 
   async function testLmStudio() {
     setLmBusy(true); setLmError(''); setLmModels([]);
@@ -48,6 +60,21 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               value={settings.theme}
               onChange={(v) => updateSettings({ theme: v as any })}
               options={[{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]}
+            />
+          </Row>
+          <Row label="New flow layout" hint="Which tabs a new flow starts with.">
+            <Segmented
+              value={flowPrefs.defaultVariant}
+              onChange={(v) => updateFlowPrefs({ defaultVariant: v as any })}
+              options={[{ value: 'stock-issues', label: 'Stock Issues' }, { value: 'advantage', label: 'Advantage' }]}
+            />
+          </Row>
+          <Row label="Auto-fit columns" hint="Resize columns to fill the window as it changes.">
+            <input
+              type="checkbox"
+              style={{ accentColor: 'var(--accent)' }}
+              checked={flowPrefs.autoFitColumns}
+              onChange={(e) => updateFlowPrefs({ autoFitColumns: e.target.checked })}
             />
           </Row>
           <Row label="Side colors" hint="Used for the aff and neg speech columns on every flow.">
@@ -212,6 +239,22 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           </Row>
 
           <div className="divider pt-3.5">
+            <label className="flex items-start gap-2.5 text-sm cursor-pointer mb-3">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                style={{ accentColor: 'var(--accent)' }}
+                checked={flowPrefs.aiTabSummaries}
+                onChange={(e) => updateFlowPrefs({ aiTabSummaries: e.target.checked })}
+              />
+              <span className="flex-1">
+                <span className="font-medium">Summarise a tab when I hover it</span>
+                <span className="block text-xs mt-0.5" style={{ color: 'var(--label-color)' }}>
+                  Costs an API call per tab, the first time its contents change. Off, the tooltip
+                  still shows a free preview built from the tags already on the flow.
+                </span>
+              </span>
+            </label>
             <label className="flex items-start gap-2.5 text-sm cursor-pointer">
               <input
                 type="checkbox"
