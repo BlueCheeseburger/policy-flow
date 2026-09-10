@@ -3349,6 +3349,7 @@ export default function FlowView() {
                     </React.Fragment>
                   ))}
                 </div>
+                <div className="w-px self-stretch shrink-0" style={{ background: 'var(--border-subtle)' }} />
                 <span className="text-[12px] leading-snug" style={{ color: 'var(--ink-muted)' }}>
                   {desc}
                 </span>
