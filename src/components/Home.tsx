@@ -9,6 +9,9 @@ import { listFlows, deleteFlow as cloudDeleteFlow, leaveFlow } from '../platform
 import { useDragActive } from '../hooks/useDragActive';
 import Tooltip from './Tooltip';
 import { LoadingState } from './Spinner';
+import AnalyzeRound from './AnalyzeRound';
+import { POLICY_COLS } from './FlowView';
+import type { SheetData } from './FlowView';
 import { readSettings } from '../platform/settings';
 
 /**
@@ -21,6 +24,15 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
   const [error, setError] = useState('');
   const { dragActive, setDragActive, dragHandlers } = useDragActive();
   const merged = useRef(false);
+  // Analyze Round lives here rather than in the flow toolbar: it reads the whole
+  // round at once, which is a thing you do about a flow, not inside one.
+  const [analyzing, setAnalyzing] = useState<{ flowId: string; sheets: SheetData[]; columns: string[] } | null>(null);
+
+  async function openAnalyze(flow: FlowMeta) {
+    const data = await readKey<any>(`flow_data_${flow.id}`);
+    if (!data?.sheets?.length) { setError('That flow has nothing on it to analyze yet.'); return; }
+    setAnalyzing({ flowId: flow.id, sheets: data.sheets, columns: data.customColumns ?? POLICY_COLS });
+  }
 
   // Reconcile the local list against the cloud once the identity resolves, so
   // a flow made on another device (or handed over by a transfer code) shows up
@@ -183,12 +195,27 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {sorted.map((f) => (
               <li key={f.id}>
-                <FlowCard flow={f} onOpen={() => setView({ kind: 'flow', flowId: f.id })} onRemove={() => void removeFlow(f)} />
+                <FlowCard
+                  flow={f}
+                  onOpen={() => setView({ kind: 'flow', flowId: f.id })}
+                  onRemove={() => void removeFlow(f)}
+                  onAnalyze={() => void openAnalyze(f)}
+                />
               </li>
             ))}
           </ul>
         )}
       </div>
+
+      {analyzing && (
+        <AnalyzeRound
+          sheets={analyzing.sheets}
+          columns={analyzing.columns}
+          event="policy"
+          flowId={analyzing.flowId}
+          onClose={() => setAnalyzing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -199,7 +226,9 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
  * actually holds a cell, so how far into the round a flow got is legible
  * without opening it.
  */
-function FlowCard({ flow, onOpen, onRemove }: { flow: FlowMeta; onOpen: () => void; onRemove: () => void }) {
+function FlowCard({ flow, onOpen, onRemove, onAnalyze }: {
+  flow: FlowMeta; onOpen: () => void; onRemove: () => void; onAnalyze: () => void;
+}) {
   const [fill, setFill] = useState<number[]>([]);
   // The same two colours the grid paints its columns with, so the strip reads
   // as a miniature of the actual flow rather than a differently-coloured chart.
@@ -269,15 +298,26 @@ function FlowCard({ flow, onOpen, onRemove }: { flow: FlowMeta; onOpen: () => vo
         </div>
       </div>
 
-      <Tooltip text={flow.shared ? 'Remove from your list' : 'Delete flow'} up>
-        <button
-          className="btn-icon absolute top-2.5 right-2.5 w-6 h-6 rounded-md opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
-          style={{ background: 'var(--bg-elevated)', color: 'var(--ink-muted)' }}
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        >
-          <IcoClose />
-        </button>
-      </Tooltip>
+      <div className="absolute top-2.5 right-2.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        <Tooltip text="Analyze this round" up>
+          <button
+            className="btn-icon ai-glow-ring h-6 px-2 rounded-md text-[11px] font-semibold"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--ink)' }}
+            onClick={(e) => { e.stopPropagation(); onAnalyze(); }}
+          >
+            Analyze
+          </button>
+        </Tooltip>
+        <Tooltip text={flow.shared ? 'Remove from your list' : 'Delete flow'} up>
+          <button
+            className="btn-icon w-6 h-6 rounded-md"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--ink-muted)' }}
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          >
+            <IcoClose />
+          </button>
+        </Tooltip>
+      </div>
     </div>
   );
 }

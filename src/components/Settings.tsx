@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../store/appStore';
 import { listLmStudioModels, promptNames, promptSource } from '../platform/ai';
 import { aiConfigured } from '../platform/settings';
@@ -6,6 +6,11 @@ import { readFlowPrefs, writeFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/
 import { createTransferCode, claimTransferCode } from '../platform/cloud';
 import { clearAll } from '../platform/storage';
 import Tooltip from './Tooltip';
+import {
+  DEFAULT_BINDINGS, getEffectiveBinding, hasCustomBinding, setCustomBinding, resetBinding,
+  findConflict, formatBinding, bindingFromEvent, isBindingValid, isShortcutDisabled,
+  toggleShortcutDisabled, type KeyBinding,
+} from '../lib/shortcutPrefs';
 
 export default function Settings({ onClose }: { onClose: () => void }) {
   const { settings, updateSettings, setFlowsIndex } = useApp();
@@ -83,6 +88,55 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               <Swatch label="Neg" value={settings.negColor} onChange={(v) => updateSettings({ negColor: v })} />
             </div>
           </Row>
+        </Section>
+
+        <Section title="Cell density and type" intro="How much of a round fits on one screen. Applies to every flow, live.">
+          <Row label="Text size" hint={`${flowPrefs.defaultFontSize}px`}>
+            <input
+              type="range" min={10} max={20} step={1}
+              className="flex-1 max-w-[220px]"
+              style={{ accentColor: 'var(--accent)' }}
+              value={flowPrefs.defaultFontSize}
+              onChange={(e) => updateFlowPrefs({ defaultFontSize: Number(e.target.value) })}
+            />
+          </Row>
+          <Row label="Row height" hint={`${flowPrefs.rowHeight}px minimum`}>
+            <input
+              type="range" min={22} max={64} step={2}
+              className="flex-1 max-w-[220px]"
+              style={{ accentColor: 'var(--accent)' }}
+              value={flowPrefs.rowHeight}
+              onChange={(e) => updateFlowPrefs({ rowHeight: Number(e.target.value) })}
+            />
+          </Row>
+          <Row label="Typeface">
+            <Segmented
+              value={flowPrefs.cellFont}
+              onChange={(v) => updateFlowPrefs({ cellFont: v as any })}
+              options={[{ value: 'sans', label: 'Sans' }, { value: 'mono', label: 'Mono' }]}
+            />
+          </Row>
+          <div
+            className="rounded-[9px] px-3 py-2.5 mt-1"
+            style={{ background: 'var(--bg-nest)' }}
+          >
+            <div
+              className="truncate"
+              style={{
+                fontSize: flowPrefs.defaultFontSize,
+                minHeight: flowPrefs.rowHeight,
+                display: 'flex',
+                alignItems: 'center',
+                fontFamily: flowPrefs.cellFont === 'mono' ? 'var(--font-mono)' : 'var(--font-text)',
+              }}
+            >
+              Warming causes extinction — Mann 24
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Keyboard shortcuts" intro="Rebind or switch off any of these. Core keys — Enter, Tab, arrows — stay fixed.">
+          <Shortcuts />
         </Section>
 
         <Section
@@ -332,6 +386,120 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           </Tooltip>
         </Section>
       </div>
+    </div>
+  );
+}
+
+/** Which shortcuts this app actually wires up. DEFAULT_BINDINGS still carries a
+ *  few ids from the app this was ported from (global search, the shortcuts
+ *  overlay, doc comments) that nothing here listens for — listing those would
+ *  offer to rebind a key that does nothing. */
+const SHORTCUT_ROWS: { id: string; label: string }[] = [
+  { id: 'flow-bold', label: 'Bold' },
+  { id: 'flow-italic', label: 'Italic' },
+  { id: 'flow-underline', label: 'Underline' },
+  { id: 'flow-strike', label: 'Strikethrough' },
+  { id: 'flow-highlight', label: 'Highlight' },
+  { id: 'flow-undo', label: 'Undo' },
+  { id: 'flow-redo', label: 'Redo' },
+  { id: 'flow-link', label: 'Draw an arrow' },
+  { id: 'flow-sheet-new', label: 'New tab' },
+  { id: 'find-page', label: 'Find' },
+];
+
+const MOD_GLYPH = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
+
+function Shortcuts() {
+  const [, bump] = useState(0);
+  const [recording, setRecording] = useState<string | null>(null);
+  // A rebind that collides with another shortcut is not silently dropped and not
+  // silently applied: it is held here until the user says which one should win.
+  const [conflict, setConflict] = useState<{ id: string; binding: KeyBinding; withId: string } | null>(null);
+  const refresh = () => bump((n) => n + 1);
+
+  useEffect(() => {
+    if (!recording) return;
+    const id = recording;   // narrowed: the effect only runs when it is set
+    function onKey(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { setRecording(null); return; }
+      // Ignore a bare modifier press — wait for the actual key.
+      if (['Meta', 'Control', 'Shift', 'Alt'].includes(e.key)) return;
+      const binding = bindingFromEvent(e);
+      if (!isBindingValid(binding)) return;   // needs ⌘ or ⌥ to be a shortcut
+      const clash = findConflict(id, binding);
+      if (clash) { setConflict({ id, binding, withId: clash }); setRecording(null); return; }
+      setCustomBinding(id, binding);
+      setRecording(null);
+      refresh();
+    }
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [recording]);
+
+  const labelFor = (id: string) => SHORTCUT_ROWS.find((r) => r.id === id)?.label ?? id;
+
+  return (
+    <div className="flex flex-col">
+      {SHORTCUT_ROWS.map((row, i) => {
+        const off = isShortcutDisabled(row.id);
+        const binding = getEffectiveBinding(row.id);
+        const custom = hasCustomBinding(row.id);
+        return (
+          <div key={row.id} className={`flex items-center gap-3 py-2 ${i > 0 ? 'divider' : ''}`}>
+            <span className="flex-1 text-sm" style={{ opacity: off ? 0.45 : 1 }}>{row.label}</span>
+            {custom && !off && (
+              <button className="btn-icon text-[11px]" style={{ color: 'var(--label-color)' }}
+                onClick={() => { resetBinding(row.id); refresh(); }}>
+                Reset
+              </button>
+            )}
+            <button
+              className="btn px-2.5 h-7 font-mono text-[11px] min-w-[74px]"
+              disabled={off}
+              onClick={() => setRecording(recording === row.id ? null : row.id)}
+              style={recording === row.id ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined}
+            >
+              {recording === row.id ? 'Press keys…' : binding ? formatBinding(binding, MOD_GLYPH) : '—'}
+            </button>
+            <Tooltip text={off ? 'Turn this shortcut on' : 'Turn this shortcut off'}>
+              <input
+                type="checkbox"
+                style={{ accentColor: 'var(--accent)' }}
+                checked={!off}
+                onChange={() => { toggleShortcutDisabled(row.id); refresh(); }}
+              />
+            </Tooltip>
+          </div>
+        );
+      })}
+
+      {conflict && (
+        <div className="callout mt-3" style={{ display: 'block' }} role="alert">
+          <strong>{formatBinding(conflict.binding, MOD_GLYPH)}</strong> is already{' '}
+          <strong>{labelFor(conflict.withId)}</strong>. Two shortcuts can't share a combo — pick which one keeps it.
+          <div className="flex gap-2 mt-2">
+            <button
+              className="btn px-2.5 h-7"
+              onClick={() => {
+                // Free the combo from its current owner, then take it.
+                resetBinding(conflict.withId);
+                toggleShortcutDisabled(conflict.withId);
+                setCustomBinding(conflict.id, conflict.binding);
+                setConflict(null);
+                refresh();
+              }}
+            >
+              Give it to {labelFor(conflict.id)}
+            </button>
+            <button className="btn px-2.5 h-7" onClick={() => { setConflict(null); setRecording(conflict.id); }}>
+              Pick a different key
+            </button>
+            <button className="btn px-2.5 h-7" onClick={() => setConflict(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

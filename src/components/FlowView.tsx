@@ -2,7 +2,6 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import * as Y from 'yjs';
 import { useApp, FlowMeta } from '../store/appStore';
 import SharePanel from './SharePanel';
-import AnalyzeRound from './AnalyzeRound';
 import { createFlowSync, FlowSyncHandle, RemoteCursor, PresenceUser, FlowSyncStatus } from '../lib/flowSync';
 import { isShortcutDisabled, matchesShortcut } from '../lib/shortcutPrefs';
 import {
@@ -23,6 +22,7 @@ import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
 import { summarizeFlowSheet } from '../platform/aiFeatures';
 import { saveSnapshot as cloudSaveSnapshot } from '../platform/cloud';
+import { cloudConfigured } from '../platform/supabase';
 import { readSettings, SETTINGS_CHANGED_EVENT } from '../platform/settings';
 import { readFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
 import { planStockIssueConversion, StockIssuePlan } from '../lib/stockIssueSuggest';
@@ -276,7 +276,21 @@ export default function FlowView() {
   const [columnWidths, setColumnWidths] = useState<number[]>([]);
   const [customColumns, setCustomColumns] = useState<string[] | null>(null);
   const [columnColors, setColumnColors] = useState<(string | null)[]>([]);
-  const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
+  const [fontSize, setFontSize] = useState(() => readFlowPrefs().defaultFontSize);
+  // Density and typeface are global settings, applied live to whatever flow is
+  // open — there is no per-flow control for them any more.
+  const [rowHeight, setRowHeight] = useState(() => readFlowPrefs().rowHeight);
+  const [cellFont, setCellFont] = useState(() => readFlowPrefs().cellFont);
+  useEffect(() => {
+    function onPrefs() {
+      const p = readFlowPrefs();
+      setFontSize(p.defaultFontSize);
+      setRowHeight(p.rowHeight);
+      setCellFont(p.cellFont);
+    }
+    window.addEventListener(FLOW_PREFS_CHANGED_EVENT, onPrefs);
+    return () => window.removeEventListener(FLOW_PREFS_CHANGED_EVENT, onPrefs);
+  }, []);
   const [zoom, setZoom] = useState(100);
   const [variant, setVariant] = useState<PolicyVariant>('stock-issues');
   const [pfOrder, setPfOrder] = useState<PFOrder>('pro-first');
@@ -362,10 +376,11 @@ export default function FlowView() {
   const [renamingFlow, setRenamingFlow] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [colMenu, setColMenu] = useState<number | null>(null);
+  // Right-click menu on a sheet tab: which tab, and where to draw it.
+  const [tabMenu, setTabMenu] = useState<{ idx: number; x: number; y: number } | null>(null);
   const [hoveredCell, setHoveredCell] = useState<{ ri: number; ci: number } | null>(null);
   const [hoveredGap, setHoveredGap] = useState<{ ri: number; ci: number } | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
-  const [analyzeOpen, setAnalyzeOpen] = useState(false);
 
   // ── Live collaboration ──────────────────────────────────────────────────────
   const [live, setLive] = useState(false);              // is this flow live-synced?
@@ -542,7 +557,7 @@ export default function FlowView() {
         setColumnColors(
           data.columnColors?.length === colCount ? data.columnColors : (custCols ?? cols).map(() => null)
         );
-        setFontSize(data.fontSize ?? DEFAULT_FONT_SIZE);
+
         setZoom(data.zoom ?? 100);
         // Restore which tab was open (session restore) — falls back to 0 for
         // flows saved before this field existed, same as a fresh load.
@@ -908,7 +923,7 @@ export default function FlowView() {
       setColumnWidths(data.columnWidths?.length === colCount ? data.columnWidths : (data.customColumns ?? cols).map(() => DEFAULT_COL_WIDTH));
       setCustomColumns(data.customColumns);
       setColumnColors(data.columnColors?.length === colCount ? data.columnColors : (data.customColumns ?? cols).map(() => null));
-      setFontSize(data.fontSize);
+
       setNumRows(data.numRows ?? DEFAULT_ROWS);
       // Zoom is deliberately NOT adopted from the shared doc. It's a per-viewer
       // fit to your own window, and the grid auto-fits on every container resize
@@ -983,8 +998,13 @@ export default function FlowView() {
     };
   }, [flowId, live, identityId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-enter live mode for a flow already marked live.
-  useEffect(() => { setLive(!!flowMeta?.live); }, [flowId, flowMeta?.live]);
+  // Every flow is live. There is no per-flow toggle and no "go live" step: if
+  // this browser has an identity and the build has a Supabase project, the flow
+  // joins its realtime channel on open. Sharing is then only about handing out
+  // the link — not about changing what the flow is.
+  useEffect(() => {
+    setLive(cloudConfigured && !!identityId);
+  }, [flowId, identityId]);
 
   // ── Live observers: meta/sheets (structural) + active-sheet cells (text) ─────
   useEffect(() => {
@@ -1049,10 +1069,6 @@ export default function FlowView() {
     updateFlowMeta({ live: true, cloud: true, shareToken: token });
     setLive(true); // the lifecycle effect picks it up
     return { ok: true, shareToken: token };
-  }
-  function stopLiveCollab() {
-    updateFlowMeta({ live: false });
-    setLive(false);
   }
 
   // ── Undo / redo ──────────────────────────────────────────────────────────
@@ -2076,20 +2092,6 @@ export default function FlowView() {
 
   // Snapshot the flow once, when the Analyze Round panel opens — not on every
   // FlowView render while it's open. FlowView re-renders on every keystroke
-  // anywhere in the flow, and re-flattening every cell on each of those (via
-  // buildFlowSummary in AnalyzeRound) is wasted work. It also means "analyze the
-  // round as it stood when I clicked Analyze" instead of a target that keeps
-  // shifting while the panel is open.
-  //
-  // Placement matters here: useMemo's factory runs SYNCHRONOUSLY at this point
-  // in render (unlike useEffect, which is deferred until after commit) — so this
-  // has to sit after flushAndGetSheets/snap/cellsRef are actually initialized in
-  // this render pass. It used to live right after the `analyzeOpen` useState
-  // near the top of the component, which crashed the whole page the first time
-  // Analyze Round was opened: ReferenceError, "snap"/"cellsRef" accessed before
-  // initialization, since those are `const`s declared later in this same
-  // function and aren't hoisted the way flushAndGetSheets itself is.
-  const analyzeSheets = useMemo(() => (analyzeOpen ? flushAndGetSheets() : null), [analyzeOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stash where the current sheet is scrolled to, before anything moves.
   function rememberScroll() {
@@ -2141,6 +2143,42 @@ export default function FlowView() {
     snap.current = { ...snap.current, sheets: next, activeSheetIdx: next.length - 1 };
     persist({ sheets: next });
     recordHistory();
+  }
+
+  /**
+   * Copy a tab and everything on it — cells, arrows, and the Auto Flow marks —
+   * inserting the copy directly after the original. Arrows are cell-to-cell by
+   * key, so they survive the copy untouched; only the sheet's id changes, and
+   * it must, or the two tabs would be the same sheet as far as live sync and
+   * the cell buffer are concerned.
+   */
+  function duplicateSheet(idx: number) {
+    const saved = flushAndGetSheets();
+    const src = saved[idx];
+    if (!src) return;
+    const copy: SheetData = {
+      ...src,
+      id: crypto.randomUUID(),
+      name: `${src.name} copy`.slice(0, 40),
+      cells: { ...src.cells },
+      arrows: (src.arrows ?? []).map((a) => ({ ...a })),
+      aiCells: src.aiCells ? [...src.aiCells] : undefined,
+      // The summary describes the original's contents, and re-deriving it costs
+      // an API call — but leaving it attached would show a stale summary for a
+      // tab the user is about to edit. Drop it and let it regenerate on hover.
+      aiSummary: undefined,
+      aiSummarySource: undefined,
+    };
+    const next = [...saved.slice(0, idx + 1), copy, ...saved.slice(idx + 1)];
+    const newIdx = idx + 1;
+    setSheets(next);
+    cellsRef.current = { ...copy.cells };
+    cellsOwnerId.current = copy.id;
+    setActiveSheetIdx(newIdx);
+    snap.current = { ...snap.current, sheets: next, activeSheetIdx: newIdx };
+    persist({ sheets: next });
+    recordHistory();
+    setCellNonce((n) => n + 1);
   }
 
   function deleteSheet(idx: number) {
@@ -2600,19 +2638,6 @@ export default function FlowView() {
           </Tooltip>
         )}
 
-        <div className="w-px h-4 shrink-0" style={{ background: 'var(--border-subtle)' }} />
-
-        {/* Stock Issues / Advantage — only while the flow is still empty. Switching
-            variant rebuilds the sheets from the default names for that variant, so
-            offering it once there's content would silently drop extra/renamed tabs
-            and their contents. Once anything's on the flow, this disappears. */}
-        {!flowHasContent && (
-          <div className="flex rounded-lg p-0.5" style={{ background: 'var(--mode-toggle-bg)' }}>
-            <SmallBtn label="Stock Issues" active={variant === 'stock-issues'} onClick={() => changeVariant('stock-issues')} />
-            <SmallBtn label="Advantage" active={variant === 'advantage'} onClick={() => changeVariant('advantage')} />
-          </div>
-        )}
-
 
         <div className="flex-1" />
 
@@ -2631,32 +2656,6 @@ export default function FlowView() {
         <ToolBtn onMouseDown={(e) => { e.preventDefault(); applyFormat('strikeThrough'); }} title="Strikethrough (⌘⇧X)" active={fmt.strike}>
           <span style={{ textDecoration: 'line-through', fontSize: 13 }}>S</span>
         </ToolBtn>
-        <ToolBtn onMouseDown={(e) => { e.preventDefault(); applyFormat('highlight'); }} title="Highlight (⌘⇧H)" active={fmt.highlight}>
-          <span style={{ fontSize: 13, background: HILITE, color: '#1a1a1a', padding: '0 3px', borderRadius: 2 }}>H</span>
-        </ToolBtn>
-
-        <ToolDivider />
-
-        {/* Font size */}
-        <ToolBtn onClick={() => changeFontSize(-1)} title="Smaller text"><span style={{ fontSize: 11 }}>A−</span></ToolBtn>
-        <span className="text-xs w-4 text-center tabular-nums shrink-0" style={{ color: 'var(--label-color)' }}>{fontSize}</span>
-        <ToolBtn onClick={() => changeFontSize(1)} title="Larger text"><span style={{ fontSize: 13 }}>A+</span></ToolBtn>
-
-        <ToolDivider />
-
-        {/* Zoom */}
-        <ToolBtn onClick={() => changeZoom(zoom - 10)} title="Zoom out"><span style={{ fontSize: 15 }}>−</span></ToolBtn>
-        <Tooltip text="Fit to window">
-          <button
-            className="text-xs w-9 text-center tabular-nums transition hover:opacity-70 shrink-0"
-            style={{ color: 'var(--label-color)' }}
-            onClick={fitZoom}
-          >
-            {zoom}%
-          </button>
-        </Tooltip>
-        <ToolBtn onClick={() => changeZoom(zoom + 10)} title="Zoom in"><span style={{ fontSize: 14 }}>+</span></ToolBtn>
-        <ToolBtn onClick={fitZoom} title="Fit to window"><IcoFit /></ToolBtn>
 
         {customColumns && (
           <ToolBtn onClick={resetColumns} title="Reset columns"><IcoResetCols /></ToolBtn>
@@ -2682,56 +2681,6 @@ export default function FlowView() {
           <IcoArrow />
         </ToolBtn>
 
-        {/* Live status — present only while live; the entry point into going live
-            lives inside the Share panel now (see "Combine Share and Collaborate"
-            below), so this is purely a glanceable status readout + leave button.
-            Reflects `syncStatus`, not just `liveReady` — liveReady only ever
-            covers the FIRST join; a connection can drop and try to reconnect
-            afterward (network blip, laptop sleep) without liveReady ever
-            flipping back, so without syncStatus this dot would keep showing
-            "synced" green through an actual disconnect. */}
-        {live && (() => {
-          const connected = liveReady && syncStatus === 'SUBSCRIBED';
-          const label = !liveReady ? 'Connecting…' : connected ? 'Live' : 'Reconnecting…';
-          const dotColor = connected ? '#16a34a' : '#d97706';
-          const title = !liveReady
-            ? 'Connecting to live session…'
-            : connected
-            ? `Live — editing together in realtime${remoteCursors.length ? ` with ${remoteCursors.length} other ${remoteCursors.length === 1 ? 'person' : 'people'}` : ' (no one else here yet)'}`
-            : 'Connection dropped — reconnecting. Your edits are still saving locally and will sync once back online.';
-          return (
-          <div
-            className="flex items-center gap-1.5 shrink-0 px-2 h-[26px] rounded-md"
-            style={{ background: 'var(--nav-active-bg)' }}
-            title={title}
-          >
-            <span className="relative flex h-2 w-2 shrink-0">
-              {connected && <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background: dotColor }} />}
-              <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: dotColor }} />
-            </span>
-            <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--nav-active-color)' }}>{label}</span>
-            {/* Present teammates */}
-            <div className="flex items-center -space-x-1">
-              {remoteCursors.slice(0, 4).map((c) => (
-                <span
-                  key={c.user.id}
-                  className="w-4 h-4 rounded-full"
-                  style={{ background: c.user.color, border: '1px solid var(--bg-elevated)' }}
-                  aria-label="Someone else editing"
-                />
-              ))}
-            </div>
-            <Tooltip text="Leave live session">
-              <button
-                onClick={stopLiveCollab}
-                className="text-[10px] leading-none ml-0.5 opacity-70 hover:opacity-100"
-                style={{ color: 'var(--nav-active-color)' }}
-              >✕</button>
-            </Tooltip>
-          </div>
-          );
-        })()}
-
         {/* Share — also where going live now starts (was a separate button; both
             led to the same panel, so they're one button now). */}
         <div className="relative shrink-0">
@@ -2741,11 +2690,6 @@ export default function FlowView() {
           )}
         </div>
 
-        {/* Analyze round */}
-        <ToolBtn onClick={() => setAnalyzeOpen(true)} title="Analyze round" className="ai-glow-ring"><IcoAnalyze /></ToolBtn>
-
-        <ToolDivider />
-        <ToolBtn onClick={() => setView({ kind: 'settings' })} title="Settings"><IcoSettings /></ToolBtn>
       </div>
 
       {/* Find bar */}
@@ -2786,16 +2730,6 @@ export default function FlowView() {
           onGoLive={startLiveCollab}
           onExportXlsx={exportXlsx}
           onClose={() => setShareOpen(false)}
-        />
-      )}
-
-      {analyzeOpen && analyzeSheets && (
-        <AnalyzeRound
-          sheets={analyzeSheets}
-          columns={columns}
-          event={flowEvent}
-          flowId={flowId}
-          onClose={() => setAnalyzeOpen(false)}
         />
       )}
 
@@ -2931,6 +2865,7 @@ export default function FlowView() {
                 <div
                   key={ci}
                   className="relative flex items-center justify-center"
+                  onContextMenu={(e) => { e.preventDefault(); setColMenu(ci); }}
                   style={{
                     background: colBg(colColor(ci), dark, true),
                     borderRight: ci < columns.length - 1 ? '1px solid var(--border-med)' : 'none',
@@ -2948,8 +2883,13 @@ export default function FlowView() {
                         if (e.key === 'Enter') commitRenameCol();
                         if (e.key === 'Escape') setRenamingCol(null);
                       }}
-                      className="w-full text-center text-xs font-bold bg-transparent outline-none px-2"
-                      style={{ color: 'var(--nav-active-color)' }}
+                      className="w-full text-center text-xs font-bold bg-transparent px-2"
+                      // outline:none inline, because the app-wide :focus-visible
+                      // ring is a 2px accent outline and this input sits flush
+                      // inside a 36px header — the ring's top and bottom edges
+                      // get clipped, leaving two purple bars either side of the
+                      // field. The caret and the field itself show focus here.
+                      style={{ color: 'var(--nav-active-color)', outline: 'none' }}
                     />
                   ) : (
                     <Tooltip text="Double-click to rename">
@@ -2962,23 +2902,6 @@ export default function FlowView() {
                       </span>
                     </Tooltip>
                   )}
-
-                  {/* Column menu trigger — always visible for discoverability.
-                      Kept on native `title` (not Tooltip): this button is
-                      itself `position: absolute` against the column header cell,
-                      and Tooltip's wrapper span would introduce a *closer*
-                      positioned ancestor, silently repositioning it. */}
-                  <button
-                    data-col-menu
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded transition"
-                    style={{ color: 'var(--nav-active-color)', fontSize: 11, opacity: colMenu === ci ? 1 : 0.55 }}
-                    title="Column options"
-                    onClick={(e) => { e.stopPropagation(); setColMenu(colMenu === ci ? null : ci); }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = colMenu === ci ? '1' : '0.55')}
-                  >
-                    ▾
-                  </button>
 
                   {colMenu === ci && (
                     <div
@@ -3095,10 +3018,10 @@ export default function FlowView() {
                       className="flow-cell w-full outline-none bg-transparent leading-snug whitespace-pre-wrap break-words"
                       style={{
                         fontSize: effectiveFontSize + 'px',
+                        fontFamily: cellFont === 'mono' ? 'var(--font-mono)' : 'var(--font-text)',
                         color: 'rgb(var(--ink-rgb))',
-                        minHeight: Math.round(32 * zoom / 100) + 'px',
+                        minHeight: Math.round(rowHeight * zoom / 100) + 'px',
                         padding: `${Math.round(6 * zoom / 100)}px ${Math.round(8 * zoom / 100)}px`,
-                        fontFamily: 'inherit',
                         caretColor: 'rgb(var(--ink-rgb))',
                       }}
                       spellCheck={false}
@@ -3213,6 +3136,33 @@ export default function FlowView() {
       </div>
       </div>
 
+      {/* Right-click menu for a sheet tab. Rendered here, not inside the tab:
+          the tab strip clips its overflow, so a menu drawn in the tab would be
+          cut off at the 36px strip. */}
+      {tabMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onMouseDown={() => setTabMenu(null)} onContextMenu={(e) => { e.preventDefault(); setTabMenu(null); }} />
+          <div
+            className="fixed z-50 py-1 rounded-lg shadow-xl text-xs"
+            style={{
+              left: Math.min(tabMenu.x, window.innerWidth - 190),
+              top: Math.max(8, tabMenu.y - 132),
+              minWidth: 176, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <DropBtn onClick={() => { setTabMenu(null); startRenameSheet(tabMenu.idx); }}>Rename tab</DropBtn>
+            <DropBtn onClick={() => { setTabMenu(null); duplicateSheet(tabMenu.idx); }}>Duplicate tab</DropBtn>
+            <DropBtn onClick={() => { setTabMenu(null); addSheet(); }}>New tab</DropBtn>
+            {sheets.length > 1 && (
+              <>
+                <div className="my-1 mx-2" style={{ borderTop: '1px solid var(--border-subtle)' }} />
+                <DropBtn danger onClick={() => { const i = tabMenu.idx; setTabMenu(null); deleteSheet(i); }}>Delete tab</DropBtn>
+              </>
+            )}
+          </div>
+        </>
+      )}
+
       {/* Ghost following the cursor while a group of cells is being dragged.
           Pointer-events off so the hit-test underneath still finds cells/tabs. */}
       {dragging && dragPos && drag.current && (
@@ -3293,6 +3243,7 @@ export default function FlowView() {
               onClick={() => switchSheet(idx)}
               onDoubleClick={() => startRenameSheet(idx)}
               onDelete={sheets.length > 1 ? () => deleteSheet(idx) : undefined}
+              onContextMenu={(x, y) => setTabMenu({ idx, x, y })}
               getSummary={() => sheetSummary(idx)}
               onEnsureSummary={() => ensureSheetSummary(idx)}
               dragging={dragTabIdx === idx}
@@ -3397,15 +3348,6 @@ function IcoSettings() {
   );
 }
 
-function IcoAnalyze() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="6.5" cy="6.5" r="4" />
-      <path d="M9.5 9.5L12.5 12.5" />
-      <path d="M6.5 4.5v4M4.5 6.5h4" />
-    </svg>
-  );
-}
 
 // Shared compact toolbar icon button with a consistent hover background.
 function ToolBtn({ children, onClick, onMouseDown, title, active, disabled, className }: {
@@ -3472,7 +3414,7 @@ function DropBtn({ children, onClick, danger }: { children: React.ReactNode; onC
 function SheetTab({
   idx, dropTarget,
   name, active, renaming, renameValue, onRenameChange, onCommitRename, onCancelRename,
-  onClick, onDoubleClick, onDelete, getSummary, onEnsureSummary,
+  onClick, onDoubleClick, onDelete, onContextMenu, getSummary, onEnsureSummary,
   dragging, dropBefore, onDragStart, onDragOverTab, onDropTab, onDragEnd,
 }: {
   /** Position in the tab strip — published as `data-sheet-idx` so a cell drag
@@ -3484,6 +3426,8 @@ function SheetTab({
   renameValue: string; onRenameChange: (v: string) => void;
   onCommitRename: () => void; onCancelRename: () => void;
   onClick: () => void; onDoubleClick: () => void; onDelete?: () => void;
+  /** Right-click anywhere on the tab — the parent draws the menu. */
+  onContextMenu?: (x: number, y: number) => void;
   getSummary?: () => string;
   /** Kicks off (or reuses the cache for) this tab's AI summary. Fire-and-forget — the
    * result lands via `getSummary` once generation resolves and re-renders the parent. */
@@ -3516,6 +3460,7 @@ function SheetTab({
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; onDragOverTab?.(); }}
       onDrop={(e) => { e.preventDefault(); onDropTab?.(); }}
       onDragEnd={() => onDragEnd?.()}
+      onContextMenu={(e) => { e.preventDefault(); onContextMenu?.(e.clientX, e.clientY); }}
       style={{
         height: '100%',
         borderRight: '1px solid var(--border-subtle)',
@@ -3546,8 +3491,11 @@ function SheetTab({
           onChange={(e) => onRenameChange(e.target.value)}
           onBlur={onCommitRename}
           onKeyDown={(e) => { if (e.key === 'Enter') onCommitRename(); if (e.key === 'Escape') onCancelRename(); }}
-          className="flex-1 bg-transparent outline-none text-xs font-medium px-3"
-          style={{ color: 'var(--nav-active-color)' }}
+          className="flex-1 bg-transparent text-xs font-medium px-3"
+          // See the column-header rename for why the focus ring is killed here:
+          // the 2px accent outline is clipped by the 36px tab strip, so only its
+          // vertical edges survive as two stray purple bars beside the field.
+          style={{ color: 'var(--nav-active-color)', outline: 'none' }}
           onClick={(e) => e.stopPropagation()}
         />
       ) : (

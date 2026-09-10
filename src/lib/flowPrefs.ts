@@ -27,16 +27,22 @@ export interface FlowPrefs {
   /** Zoom % a brand-new flow opens at, before "fill the window" or a manual
    * zoom ever runs. An existing flow keeps whatever zoom it was last saved at. */
   defaultZoom: number;
-  /** Cell text size (px) a brand-new flow opens at. An existing flow keeps
-   * whatever size it was last saved at — this never resizes one retroactively. */
+  /** Cell text size, in px. Applied to EVERY flow, not just new ones: the
+   * per-flow size buttons were removed from the toolbar, so a value stored on
+   * one flow would be unreachable and would silently disagree with this. */
   defaultFontSize: number;
+  /** Minimum row height in px at 100% zoom — how much round fits on screen. */
+  rowHeight: number;
+  /** Typeface for cell text. Mono is easier to scan for some people; the
+   * condensed setting fits more words per line at the same size. */
+  cellFont: 'sans' | 'mono';
   /** Columns continuously stretch/shrink to fill the window (sidebar collapse,
    * resize, chat panel toggle). Off = zoom only changes when you ask it to. */
   autoFitColumns: boolean;
   /** The tab hover tooltip generates a one-sentence AI summary of the argument
    * on that sheet the first time you hover it (see FlowView's
    * ensureSheetSummary). Off = tabs only ever show the free local tag preview —
-   * no Warroom AI call, ever, from hovering. */
+   * no model call, ever, from hovering. */
   aiTabSummaries: boolean;
 }
 
@@ -50,6 +56,8 @@ export const FLOW_PREFS_DEFAULTS: FlowPrefs = {
   defaultFontSize: 13,
   autoFitColumns: true,
   aiTabSummaries: true,
+  rowHeight: 32,
+  cellFont: 'sans',
 };
 
 export function readFlowPrefs(): FlowPrefs {
@@ -65,6 +73,9 @@ export function readFlowPrefs(): FlowPrefs {
       defaultFontSize: typeof p.defaultFontSize === 'number' && p.defaultFontSize >= 10 && p.defaultFontSize <= 20
         ? p.defaultFontSize : FLOW_PREFS_DEFAULTS.defaultFontSize,
       autoFitColumns: typeof p.autoFitColumns === 'boolean' ? p.autoFitColumns : FLOW_PREFS_DEFAULTS.autoFitColumns,
+      rowHeight: typeof p.rowHeight === 'number' && p.rowHeight >= 22 && p.rowHeight <= 64
+        ? p.rowHeight : FLOW_PREFS_DEFAULTS.rowHeight,
+      cellFont: p.cellFont === 'mono' ? 'mono' : 'sans',
       aiTabSummaries: typeof p.aiTabSummaries === 'boolean' ? p.aiTabSummaries : FLOW_PREFS_DEFAULTS.aiTabSummaries,
     };
   } catch {

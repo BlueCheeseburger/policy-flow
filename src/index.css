@@ -508,6 +508,15 @@ html.reduce-motion *::after {
 .scroll-thin::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
 .scroll-thin::-webkit-scrollbar-track { background: transparent; }
 
+/* Vertical scrollbar only. Columns already refit themselves to the window, so a
+   horizontal bar on the grid never represents anything the user needs to reach
+   — it appears only because the VERTICAL bar takes width after the columns were
+   sized, leaving the content a few pixels wider than the viewport. Drawn right
+   above the sheet tabs, it read as a stray artifact. Scrolling sideways still
+   works (trackpad, shift-wheel) for the rare flow with many custom columns; the
+   bar just isn't painted. */
+.scroll-thin::-webkit-scrollbar:horizontal { height: 0; }
+
 .sidebar-scroll::-webkit-scrollbar { width: 4px; }
 .sidebar-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar-thin); border-radius: 2px; }
 .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
