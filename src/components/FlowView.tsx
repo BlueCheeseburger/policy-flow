@@ -1411,9 +1411,8 @@ export default function FlowView() {
 
     if (e.key === 'Tab') {
       e.preventDefault();
-      const next = e.shiftKey ? ci - 1 : ci + 1;
-      if (next >= 0 && next < columns.length) focusCell(`${ri}-${next}`);
-      else if (!e.shiftKey && ri < numRows - 1) focusCell(`${ri + 1}-0`);
+      const next = e.shiftKey ? ri - 1 : ri + 1;
+      if (next >= 0 && next < numRows) focusCell(`${next}-${ci}`, 'start');
     } else if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault();
       document.execCommand('insertLineBreak');
