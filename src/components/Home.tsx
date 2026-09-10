@@ -27,6 +27,8 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
   // Analyze Round lives here rather than in the flow toolbar: it reads the whole
   // round at once, which is a thing you do about a flow, not inside one.
   const [analyzing, setAnalyzing] = useState<{ flowId: string; sheets: SheetData[]; columns: string[] } | null>(null);
+  const [editingFlowId, setEditingFlowId] = useState<string | null>(null);
+  const [editingFlowName, setEditingFlowName] = useState('');
 
   async function openAnalyze(flow: FlowMeta) {
     const data = await readKey<any>(`flow_data_${flow.id}`);
@@ -111,6 +113,13 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     }
     setImporting(false);
     if (added.length === 1 && !failed.length) setView({ kind: 'flow', flowId: added[0].id });
+  }
+
+  async function saveFlowName(flow: FlowMeta, name: string) {
+    const trimmed = name.trim() || flow.name;
+    const next = flowsIndex.map((f) => (f.id === flow.id ? { ...f, name: trimmed } : f));
+    setFlowsIndex(next);
+    await writeKey('flows_index', next);
   }
 
   async function saveNotes(flow: FlowMeta, notes: string) {
@@ -211,6 +220,7 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
                   onOpen={() => setView({ kind: 'flow', flowId: f.id })}
                   onRemove={() => void removeFlow(f)}
                   onAnalyze={() => void openAnalyze(f)}
+                  onRename={(name) => void saveFlowName(f, name)}
                   onNotes={(notes) => void saveNotes(f, notes)}
                 />
               </li>
@@ -238,13 +248,15 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
  * actually holds a cell, so how far into the round a flow got is legible
  * without opening it.
  */
-function FlowCard({ flow, onOpen, onRemove, onAnalyze, onNotes }: {
+function FlowCard({ flow, onOpen, onRemove, onAnalyze, onNotes, onRename }: {
   flow: FlowMeta; onOpen: () => void; onRemove: () => void; onAnalyze: () => void;
-  onNotes: (notes: string) => void;
+  onNotes: (notes: string) => void; onRename: (name: string) => void;
 }) {
   const [fill, setFill] = useState<number[]>([]);
   const [editingNotes, setEditingNotes] = useState(false);
   const [draft, setDraft] = useState(flow.notes ?? '');
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(flow.name);
   // The same two colours the grid paints its columns with, so the strip reads
   // as a miniature of the actual flow rather than a differently-coloured chart.
   const { affColor, negColor } = readSettings();
@@ -298,7 +310,26 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze, onNotes }: {
       </div>
 
       <div className="px-4 pt-3 pb-3.5">
-        <div className="text-sm font-semibold tracking-[-0.005em] line-clamp-1">{flow.name}</div>
+        {editingName ? (
+          <input
+            autoFocus
+            value={nameDraft}
+            className="text-sm font-semibold tracking-[-0.005em] w-full bg-transparent outline-none border-b"
+            style={{ borderColor: 'var(--accent)', color: 'rgb(var(--ink-rgb))' }}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={() => { setEditingName(false); onRename(nameDraft); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { setEditingName(false); onRename(nameDraft.trim() || flow.name); }
+              if (e.key === 'Escape') { setEditingName(false); setNameDraft(flow.name); }
+            }}
+          />
+        ) : (
+          <div
+            className="text-sm font-semibold tracking-[-0.005em] line-clamp-1 cursor-text"
+            onDoubleClick={() => { setNameDraft(flow.name); setEditingName(true); }}
+            title="Double-click to rename"
+          >{flow.name}</div>
+        )}
 
         {/* Scratch notes. Double-click to edit, exactly like renaming a tab —
             click alone has to stay "open the flow", which is what the whole card

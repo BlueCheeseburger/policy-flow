@@ -101,9 +101,7 @@ export default function SharePanel({
           <button className="btn w-full py-2" onClick={() => void onExportXlsx()}>
             Download as .xlsx
           </button>
-          <p className="text-xs mt-2" style={{ color: 'var(--label-color)' }}>
-            A spreadsheet copy — this is also how you move a flow into Warroom.
-          </p>
+
         </div>
       </div>
     </div>

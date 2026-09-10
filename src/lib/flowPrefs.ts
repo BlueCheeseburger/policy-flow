@@ -44,6 +44,8 @@ export interface FlowPrefs {
    * ensureSheetSummary). Off = tabs only ever show the free local tag preview —
    * no model call, ever, from hovering. */
   aiTabSummaries: boolean;
+  /** Show Google Sheets–style row/column numbers on the grid. */
+  showGridNumbers: boolean;
 }
 
 export const FLOW_PREFS_KEY = 'warroom-flow-prefs';
@@ -58,6 +60,7 @@ export const FLOW_PREFS_DEFAULTS: FlowPrefs = {
   aiTabSummaries: true,
   rowHeight: 32,
   cellFont: 'sans',
+  showGridNumbers: false,
 };
 
 export function readFlowPrefs(): FlowPrefs {
@@ -76,6 +79,7 @@ export function readFlowPrefs(): FlowPrefs {
       rowHeight: typeof p.rowHeight === 'number' && p.rowHeight >= 22 && p.rowHeight <= 64
         ? p.rowHeight : FLOW_PREFS_DEFAULTS.rowHeight,
       cellFont: p.cellFont === 'mono' ? 'mono' : 'sans',
+      showGridNumbers: typeof p.showGridNumbers === 'boolean' ? p.showGridNumbers : FLOW_PREFS_DEFAULTS.showGridNumbers,
       aiTabSummaries: typeof p.aiTabSummaries === 'boolean' ? p.aiTabSummaries : FLOW_PREFS_DEFAULTS.aiTabSummaries,
     };
   } catch {

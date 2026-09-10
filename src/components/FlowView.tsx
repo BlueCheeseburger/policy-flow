@@ -21,7 +21,7 @@ import { flowDataToXlsxBase64 } from '../utils/flowImport';
 import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
 import { summarizeFlowSheet } from '../platform/aiFeatures';
-import { saveSnapshot as cloudSaveSnapshot } from '../platform/cloud';
+import { saveSnapshot as cloudSaveSnapshot, shareUrl } from '../platform/cloud';
 import { cloudConfigured } from '../platform/supabase';
 import { readSettings, SETTINGS_CHANGED_EVENT } from '../platform/settings';
 import { readFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
@@ -285,12 +285,14 @@ export default function FlowView() {
   // open — there is no per-flow control for them any more.
   const [rowHeight, setRowHeight] = useState(() => readFlowPrefs().rowHeight);
   const [cellFont, setCellFont] = useState(() => readFlowPrefs().cellFont);
+  const [showGridNumbers, setShowGridNumbers] = useState(() => readFlowPrefs().showGridNumbers);
   useEffect(() => {
     function onPrefs() {
       const p = readFlowPrefs();
       setFontSize(p.defaultFontSize);
       setRowHeight(p.rowHeight);
       setCellFont(p.cellFont);
+      setShowGridNumbers(p.showGridNumbers);
     }
     window.addEventListener(FLOW_PREFS_CHANGED_EVENT, onPrefs);
     return () => window.removeEventListener(FLOW_PREFS_CHANGED_EVENT, onPrefs);
@@ -498,7 +500,8 @@ export default function FlowView() {
   const effectiveWidths = columnWidths.map((w) => Math.round(w * zoom / 100));
   const effectiveFontSize = Math.max(8, Math.round(fontSize * zoom / 100));
   const totalWidth = effectiveWidths.reduce((a, b) => a + b, 0);
-  const gridTemplate = effectiveWidths.map((w) => `${w}px`).join(' ');
+  const ROW_NUM_WIDTH = 32;
+  const gridTemplate = (showGridNumbers ? `${ROW_NUM_WIDTH}px ` : '') + effectiveWidths.map((w) => `${w}px`).join(' ');
 
   // Which cell (in the active sheet) each remote teammate is currently editing.
   const remoteCursorMap = new Map<string, RemoteCursor>();
@@ -1021,6 +1024,16 @@ export default function FlowView() {
   useEffect(() => {
     setLive(cloudConfigured && !!identityId);
   }, [flowId, identityId]);
+
+  // Keep the browser URL in sync with the flow's share link, so the user can
+  // copy it from the address bar and send it to a collaborator.
+  useEffect(() => {
+    if (!flowId) return;
+    const token = flowMeta?.shareToken;
+    const url = token ? shareUrl(token) : `${window.location.origin}/#/flow/${flowId}`;
+    window.history.replaceState(null, '', url);
+    return () => { window.history.replaceState(null, '', '/'); };
+  }, [flowId, flowMeta?.shareToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Live observers: meta/sheets (structural) + active-sheet cells (text) ─────
   useEffect(() => {
@@ -2630,6 +2643,7 @@ export default function FlowView() {
             <Logo size={20} />
           </button>
         </Tooltip>
+        <div className="w-px h-4 shrink-0 mx-1" style={{ background: 'var(--border-subtle)' }} />
 
         {/* Flow name */}
         {renamingFlow ? (
@@ -2875,11 +2889,19 @@ export default function FlowView() {
               borderBottom: '2px solid var(--border-med)',
             }}
           >
+            {showGridNumbers && (
+                <div style={{
+                  width: ROW_NUM_WIDTH, height: 36, flexShrink: 0,
+                  background: 'var(--bg-elevated)',
+                  borderRight: '1px solid var(--border-med)',
+                  borderBottom: '2px solid var(--border-med)',
+                }} />
+              )}
             {columns.map((col, ci) => {
               return (
                 <div
                   key={ci}
-                  className="relative flex items-center justify-center"
+                  className="relative flex items-center"
                   onContextMenu={(e) => { e.preventDefault(); setColMenu(ci); }}
                   style={{
                     background: colBg(colColor(ci), dark, true),
@@ -2888,6 +2910,14 @@ export default function FlowView() {
                     userSelect: 'none',
                   }}
                 >
+                  {showGridNumbers && (
+                    <span style={{
+                      position: 'absolute', top: 2, left: 4,
+                      fontSize: 9, fontFamily: 'var(--font-mono)',
+                      color: 'var(--label-color)', pointerEvents: 'none',
+                      lineHeight: 1,
+                    }}>{String.fromCharCode(65 + ci)}</span>
+                  )}
                   {renamingCol === ci ? (
                     <input
                       autoFocus
@@ -2983,6 +3013,20 @@ export default function FlowView() {
           {/* Data rows */}
           {Array.from({ length: numRows }, (_, ri) => (
             <div key={ri} style={{ display: 'grid', gridTemplateColumns: gridTemplate }}>
+              {showGridNumbers && (
+                <div
+                  style={{
+                    width: ROW_NUM_WIDTH,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, fontFamily: 'var(--font-mono)',
+                    color: 'var(--label-color)',
+                    borderRight: '1px solid var(--border-subtle)',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    background: 'var(--bg-elevated)',
+                    userSelect: 'none', pointerEvents: 'none',
+                  }}
+                >{ri + 1}</div>
+              )}
               {columns.map((_, ci) => {
                 const cellKey = `${ri}-${ci}`;
                 const isHovered = hoveredCell?.ri === ri && hoveredCell?.ci === ci;
@@ -3278,7 +3322,7 @@ export default function FlowView() {
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border-subtle)' }} />
         <Tooltip text="Add sheet (⌘T)">
           <button
-            className="flex items-center justify-center w-8 h-8 shrink-0 text-lg font-light transition"
+            className="flex items-center justify-center w-8 h-8 shrink-0 text-xl font-semibold transition"
             style={{ color: 'var(--label-color)' }}
             onClick={addSheet}
             onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--nav-active-color)')}

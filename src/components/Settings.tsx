@@ -22,6 +22,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [claimInput, setClaimInput] = useState('');
   const [transferMsg, setTransferMsg] = useState('');
   const [showPrompt, setShowPrompt] = useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [showKey, setShowKey] = useState(false);
   // Flow defaults live in their own store (lib/flowPrefs) because FlowView and
   // Home read them directly. Nothing in this app wrote them until now, which
@@ -82,107 +83,10 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           </Row>
         </Section>
 
-        <Section title="Cell density and type" intro="How much of a round fits on one screen. Applies to every flow, live.">
-          <Row label="Text size" hint={`${flowPrefs.defaultFontSize}px`}>
-            <input
-              type="range" min={10} max={20} step={1}
-              className="flex-1 max-w-[220px]"
-              style={{ accentColor: 'var(--accent)' }}
-              value={flowPrefs.defaultFontSize}
-              onChange={(e) => updateFlowPrefs({ defaultFontSize: Number(e.target.value) })}
-            />
-          </Row>
-          <Row label="Row height" hint={`${flowPrefs.rowHeight}px minimum`}>
-            <input
-              type="range" min={22} max={64} step={2}
-              className="flex-1 max-w-[220px]"
-              style={{ accentColor: 'var(--accent)' }}
-              value={flowPrefs.rowHeight}
-              onChange={(e) => updateFlowPrefs({ rowHeight: Number(e.target.value) })}
-            />
-          </Row>
-          <Row label="Typeface">
-            <Segmented
-              value={flowPrefs.cellFont}
-              onChange={(v) => updateFlowPrefs({ cellFont: v as any })}
-              options={[{ value: 'sans', label: 'Sans' }, { value: 'mono', label: 'Mono' }]}
-            />
-          </Row>
-          <div
-            className="rounded-[9px] px-3 py-2.5 mt-1"
-            style={{ background: 'var(--bg-nest)' }}
-          >
-            <div
-              className="truncate"
-              style={{
-                fontSize: flowPrefs.defaultFontSize,
-                minHeight: flowPrefs.rowHeight,
-                display: 'flex',
-                alignItems: 'center',
-                fontFamily: flowPrefs.cellFont === 'mono' ? 'var(--font-mono)' : 'var(--font-text)',
-              }}
-            >
-              Warming causes extinction — Mann 24
-            </div>
-          </div>
-        </Section>
-
         <Section title="Keyboard shortcuts" intro="Rebind or switch off any of these. Core keys — Enter, Tab, arrows — stay fixed.">
           <Shortcuts />
         </Section>
 
-        <Section
-          title="Moving to another browser"
-          intro="There are no accounts here, so your flows belong to this browser. Clearing site data or switching machines loses them unless you move them first — a transfer code hands every flow you own to another browser."
-        >
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              className="btn h-8 px-3"
-              onClick={async () => {
-                const res = await createTransferCode();
-                if (res.ok) { setTransferCode(res.data); setTransferMsg(''); }
-                else setTransferMsg(res.error);
-              }}
-            >
-              Make a transfer code
-            </button>
-            {transferCode && (
-              <>
-                <code
-                  className="px-3 h-8 inline-flex items-center rounded-[9px] font-mono text-sm tracking-[0.16em]"
-                  style={{ background: 'var(--bg-nest)', border: '1px solid var(--border-med)' }}
-                >
-                  {transferCode}
-                </code>
-                <span className="text-xs" style={{ color: 'var(--label-color)' }}>
-                  Valid 30 minutes, usable once
-                </span>
-              </>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1 font-mono text-sm tracking-[0.16em]"
-              placeholder="Paste a code from your other browser"
-              value={claimInput}
-              spellCheck={false}
-              onChange={(e) => setClaimInput(e.target.value)}
-            />
-            <button
-              className="btn px-3 shrink-0"
-              disabled={!claimInput.trim()}
-              onClick={async () => {
-                const res = await claimTransferCode(claimInput);
-                if (!res.ok) { setTransferMsg(res.error); return; }
-                setTransferMsg(`${res.data} flow${res.data === 1 ? '' : 's'} moved here. Reload to see them.`);
-                setClaimInput('');
-              }}
-            >
-              Redeem
-            </button>
-          </div>
-          {transferMsg && <p className="text-sm">{transferMsg}</p>}
-        </Section>
 
         <Section
           title="AI"
@@ -356,6 +260,126 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           </div>
           </div>
         </Section>
+
+        {/* ── More settings ── */}
+        <div
+          className="rounded-[13px] border"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', boxShadow: 'var(--shadow-card)' }}
+        >
+          <button
+            className="btn-icon w-full flex items-center gap-2 px-5 py-3.5 text-left"
+            onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={moreOpen}
+          >
+            <span className="label">More settings</span>
+            <span className="flex-1" />
+            <svg
+              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              style={{ color: 'var(--label-color)', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {moreOpen && (
+            <div className="px-5 pb-5 flex flex-col gap-5 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+
+              <div className="flex flex-col gap-3.5 pt-4">
+                <h2 className="label">More flow settings</h2>
+                <p className="text-sm leading-relaxed -mt-1">How much of a round fits on one screen. Applies to every flow, live.</p>
+                <Row label="Text size" hint={`${flowPrefs.defaultFontSize}px`}>
+                  <input
+                    type="range" min={10} max={20} step={1}
+                    className="flex-1 max-w-[220px]"
+                    style={{ accentColor: 'var(--accent)' }}
+                    value={flowPrefs.defaultFontSize}
+                    onChange={(e) => updateFlowPrefs({ defaultFontSize: Number(e.target.value) })}
+                  />
+                </Row>
+                <Row label="Row height" hint={`${flowPrefs.rowHeight}px minimum`}>
+                  <input
+                    type="range" min={22} max={64} step={2}
+                    className="flex-1 max-w-[220px]"
+                    style={{ accentColor: 'var(--accent)' }}
+                    value={flowPrefs.rowHeight}
+                    onChange={(e) => updateFlowPrefs({ rowHeight: Number(e.target.value) })}
+                  />
+                </Row>
+                <Row label="Typeface">
+                  <Segmented
+                    value={flowPrefs.cellFont}
+                    onChange={(v) => updateFlowPrefs({ cellFont: v as any })}
+                    options={[{ value: 'sans', label: 'Sans' }, { value: 'mono', label: 'Mono' }]}
+                  />
+                </Row>
+                <div className="rounded-[9px] px-3 py-2.5" style={{ background: 'var(--bg-nest)' }}>
+                  <div className="truncate" style={{ fontSize: flowPrefs.defaultFontSize, minHeight: flowPrefs.rowHeight, display: 'flex', alignItems: 'center', fontFamily: flowPrefs.cellFont === 'mono' ? 'var(--font-mono)' : 'var(--font-text)' }}>
+                    Warming causes extinction — Mann 24
+                  </div>
+                </div>
+                <Row label="Row/column numbers" hint="Show Google Sheets-style numbers on rows and columns.">
+                  <input
+                    type="checkbox"
+                    style={{ accentColor: 'var(--accent)' }}
+                    checked={flowPrefs.showGridNumbers ?? false}
+                    onChange={(e) => updateFlowPrefs({ showGridNumbers: e.target.checked })}
+                  />
+                </Row>
+              </div>
+              <div className="flex flex-col gap-3.5 pt-1">
+                <h2 className="label">Moving to another browser</h2>
+                <p className="text-sm leading-relaxed -mt-1">There are no accounts here, so your flows belong to this browser. Clearing site data or switching machines loses them unless you move them first — a transfer code hands every flow you own to another browser.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="btn h-8 px-3"
+                    onClick={async () => {
+                      const res = await createTransferCode();
+                      if (res.ok) { setTransferCode(res.data); setTransferMsg(''); }
+                      else setTransferMsg(res.error);
+                    }}
+                  >
+                    Make a transfer code
+                  </button>
+                  {transferCode && (
+                    <>
+                      <code
+                        className="px-3 h-8 inline-flex items-center rounded-[9px] font-mono text-sm tracking-[0.16em]"
+                        style={{ background: 'var(--bg-nest)', border: '1px solid var(--border-med)' }}
+                      >
+                        {transferCode}
+                      </code>
+                      <span className="text-xs" style={{ color: 'var(--label-color)' }}>
+                        Valid 30 minutes, usable once
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    className="input flex-1 font-mono text-sm tracking-[0.16em]"
+                    placeholder="Paste a code from your other browser"
+                    value={claimInput}
+                    spellCheck={false}
+                    onChange={(e) => setClaimInput(e.target.value)}
+                  />
+                  <button
+                    className="btn px-3 shrink-0"
+                    disabled={!claimInput.trim()}
+                    onClick={async () => {
+                      const res = await claimTransferCode(claimInput);
+                      if (!res.ok) { setTransferMsg(res.error); return; }
+                      setTransferMsg(`${res.data} flow${res.data === 1 ? '' : 's'} moved here. Reload to see them.`);
+                      setClaimInput('');
+                    }}
+                  >
+                    Redeem
+                  </button>
+                </div>
+                {transferMsg && <p className="text-sm">{transferMsg}</p>}
+              </div>
+            </div>
+          )}
+        </div>
 
         <Section title="Clear local data" danger>
           <p className="text-sm leading-relaxed">
