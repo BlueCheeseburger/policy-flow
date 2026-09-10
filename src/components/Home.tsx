@@ -118,9 +118,14 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     setFlowsIndex(next);
     await writeKey('flows_index', next);
     await writeKey(`flow_data_${flow.id}`, null);
-    // A flow someone else owns is only removed from YOUR list — deleting it
-    // for everyone in the room is not yours to do.
-    if (flow.cloud) await (flow.shared ? leaveFlow(flow.id) : cloudDeleteFlow(flow.id));
+    // A flow someone else owns is only removed from YOUR list — deleting it for
+    // everyone in the room is not yours to do.
+    //
+    // Deliberately NOT gated on flow.cloud: every flow syncs from the moment
+    // it is opened, and a stale/absent flag here means the server row is never
+    // deleted and lingers forever. Deleting a row that was never created is a
+    // no-op, so attempting it unconditionally is the safe direction to be wrong in.
+    await (flow.shared ? leaveFlow(flow.id) : cloudDeleteFlow(flow.id));
   }
 
   const sorted = [...flowsIndex].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));

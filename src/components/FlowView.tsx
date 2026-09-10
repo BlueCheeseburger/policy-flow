@@ -983,7 +983,16 @@ export default function FlowView() {
       if (!docToData(handle.doc)) seedDoc(handle.doc, currentDataForDoc(), cellToHtml);
       else hydrateFromDoc(handle.doc, { remountCells: true });
       handle.onCursors((c) => { if (!cancelled) setRemoteCursors(c); });
-      handle.onStatus((s) => { if (!cancelled) setSyncStatus(s); });
+      handle.onStatus((s) => {
+        if (cancelled) return;
+        setSyncStatus(s);
+        // Record that this flow has a server copy the moment it actually has
+        // one. Nothing else sets this any more: going live used to be an
+        // explicit step that set it, and now every flow is live from the start.
+        // It is not cosmetic — deleting a flow only removes the server row when
+        // this is true, so leaving it false orphans the row permanently.
+        if (s === 'SUBSCRIBED' && !flowMeta?.cloud) updateFlowMeta({ cloud: true });
+      });
       setLiveReady(true);
       setLiveStarting(false);
     })();
