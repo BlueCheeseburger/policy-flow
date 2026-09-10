@@ -260,21 +260,21 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze, onNotes }: {
 
   return (
     <div
-      className="group relative rounded-[13px] border cursor-pointer transition-colors"
+      className="group relative rounded-[13px] border transition-colors"
       style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', boxShadow: 'var(--shadow-card)' }}
-      onClick={onOpen}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
     >
       <div
-        className="h-[74px] px-4 pt-3.5 flex items-start gap-[5px] border-b overflow-hidden"
+        className="h-[74px] px-4 pt-3.5 flex items-start gap-[5px] border-b overflow-hidden cursor-pointer"
         style={{
           background: 'var(--bg-nest)',
           borderColor: 'var(--border-subtle)',
           borderTopLeftRadius: 12, borderTopRightRadius: 12,
         }}
-        aria-hidden="true"
+        onClick={onOpen}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+        aria-label={`Open flow: ${flow.name}`}
       >
         {fill.map((rows, ci) => (
           <div key={ci} className="flex flex-col gap-[3px] flex-1">
@@ -317,8 +317,6 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze, onNotes }: {
               color: 'rgb(var(--ink-rgb))',
               outline: 'none',
             }}
-            onClick={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
             onBlur={() => { setEditingNotes(false); onNotes(draft.trim()); }}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -333,7 +331,7 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze, onNotes }: {
           <div
             className="text-xs mt-1 mb-2 line-clamp-2 min-h-[16px]"
             style={{ color: flow.notes ? 'var(--ink-muted)' : 'var(--placeholder)' }}
-            onDoubleClick={(e) => { e.stopPropagation(); setDraft(flow.notes ?? ''); setEditingNotes(true); }}
+            onDoubleClick={() => { setDraft(flow.notes ?? ''); setEditingNotes(true); }}
             title="Double-click to write a note"
           >
             {flow.notes || 'Double-click to add a note'}

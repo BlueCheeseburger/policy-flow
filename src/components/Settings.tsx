@@ -74,14 +74,6 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               options={[{ value: 'stock-issues', label: 'Stock Issues' }, { value: 'advantage', label: 'Advantage' }]}
             />
           </Row>
-          <Row label="Auto-fit columns" hint="Resize columns to fill the window as it changes.">
-            <input
-              type="checkbox"
-              style={{ accentColor: 'var(--accent)' }}
-              checked={flowPrefs.autoFitColumns}
-              onChange={(e) => updateFlowPrefs({ autoFitColumns: e.target.checked })}
-            />
-          </Row>
           <Row label="Side colors" hint="Used for the aff and neg speech columns on every flow.">
             <div className="flex items-center gap-2">
               <Swatch label="Aff" value={settings.affColor} onChange={(v) => updateSettings({ affColor: v })} />
