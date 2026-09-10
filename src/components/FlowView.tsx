@@ -3314,6 +3314,7 @@ export default function FlowView() {
           </div>
 
           {/* Tips list */}
+          <div className="w-full" style={{ height: 1, background: 'var(--border-subtle)', margin: '2px 0 10px' }} />
           <div className="flex flex-col gap-3">
             {([
               {
@@ -3349,7 +3350,6 @@ export default function FlowView() {
                     </React.Fragment>
                   ))}
                 </div>
-                <div className="w-px self-stretch shrink-0" style={{ background: 'var(--border-subtle)' }} />
                 <span className="text-[12px] leading-snug" style={{ color: 'var(--ink-muted)' }}>
                   {desc}
                 </span>
