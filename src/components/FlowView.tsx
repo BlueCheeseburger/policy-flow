@@ -3314,8 +3314,7 @@ export default function FlowView() {
           </div>
 
           {/* Tips list */}
-          <div className="w-full" style={{ height: 1, background: 'var(--border-subtle)', margin: '2px 0 10px' }} />
-          <div className="flex flex-col gap-3">
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 10, alignItems: 'center' }}>
             {([
               {
                 keys: [`${mod}`, `↑↓←→`],
@@ -3330,9 +3329,9 @@ export default function FlowView() {
                 desc: 'Draw a connecting line between two cells',
               },
             ] as { keys: string[]; desc: string }[]).map(({ keys, desc }, i) => (
-              <div key={i} className="flex items-start gap-2.5">
-                {/* Key chips */}
-                <div className="flex items-center gap-1 shrink-0 mt-0.5">
+              <div key={i} className="contents">
+                {/* Key chips — left column */}
+                <div className="flex items-center gap-1 justify-end pr-3" style={{ borderRight: '1px solid var(--border-subtle)' }}>
                   {keys.map((k, ki) => (
                     <React.Fragment key={ki}>
                       {ki > 0 && <span className="text-[10px]" style={{ color: 'var(--ink-muted)' }}>+</span>}
@@ -3350,7 +3349,8 @@ export default function FlowView() {
                     </React.Fragment>
                   ))}
                 </div>
-                <span className="text-[12px] leading-snug" style={{ color: 'var(--ink-muted)' }}>
+                {/* Description — right column */}
+                <span className="text-[12px] leading-snug pl-3" style={{ color: 'var(--ink-muted)' }}>
                   {desc}
                 </span>
               </div>
