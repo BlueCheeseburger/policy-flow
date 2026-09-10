@@ -303,13 +303,13 @@ function CollapsibleSection({ title, summary, children }: {
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // No card around this one: a border would give a disclosure the same weight as
+  // the sections that hold actual settings. The px-5 keeps its label on the same
+  // vertical line as the card headings above and below it.
   return (
-    <section
-      className="rounded-[13px] border"
-      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', boxShadow: 'var(--shadow-card)' }}
-    >
+    <section>
       <button
-        className="btn-icon w-full flex items-center gap-3 px-5 py-4 text-left"
+        className="btn-icon w-full flex items-center gap-3 px-5 py-3 text-left"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
