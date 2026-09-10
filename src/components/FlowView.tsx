@@ -2435,6 +2435,23 @@ export default function FlowView() {
     snap.current = { ...snap.current, sheets: next };
     persist({ sheets: next });
     recordHistory();
+    maybeAutoFillNote(next, snap.current.variant);
+  }
+
+  function maybeAutoFillNote(sheets: SheetData[], v: PolicyVariant) {
+    if (!flowId) return;
+    const meta = flowsIndex.find((f) => f.id === flowId);
+    if (meta?.notes?.trim()) return; // already has a note
+    const allNamed = sheets.every((s) => !/^Sheet \d+$/.test(s.name));
+    if (!allNamed) return;
+    const names = v === 'advantage'
+      ? sheets.map((s) => s.name)
+      : sheets.filter((s) => /^off\b/i.test(s.name)).map((s) => s.name);
+    if (names.length === 0) return;
+    const note = names.join(', ');
+    const next = flowsIndex.map((f) => f.id === flowId ? { ...f, notes: note } : f);
+    setFlowsIndex(next);
+    writeKey('flows_index', next);
   }
 
   // ── Font / zoom ───────────────────────────────────────────────────────────
@@ -3322,7 +3339,7 @@ export default function FlowView() {
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border-subtle)' }} />
         <Tooltip text="Add sheet (⌘T)">
           <button
-            className="flex items-center justify-center w-8 h-8 shrink-0 text-xl font-semibold transition"
+            className="flex items-center justify-center w-10 h-10 shrink-0 text-2xl font-bold transition"
             style={{ color: 'var(--label-color)' }}
             onClick={addSheet}
             onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--nav-active-color)')}

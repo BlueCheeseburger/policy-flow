@@ -262,27 +262,23 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         </Section>
 
         {/* ── More settings ── */}
-        <div
-          className="rounded-[13px] border"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', boxShadow: 'var(--shadow-card)' }}
-        >
+        <div>
           <button
-            className="btn-icon w-full flex items-center gap-2 px-5 py-3.5 text-left"
+            className="btn-icon flex items-center gap-1.5 px-1 py-1 text-left"
             onClick={() => setMoreOpen((v) => !v)}
             aria-expanded={moreOpen}
           >
             <span className="label">More settings</span>
-            <span className="flex-1" />
             <svg
-              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
               style={{ color: 'var(--label-color)', transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
             >
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </button>
           {moreOpen && (
-            <div className="px-5 pb-5 flex flex-col gap-5 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+            <div className="flex flex-col gap-5 pt-4">
 
               <div className="flex flex-col gap-3.5 pt-4">
                 <h2 className="label">More flow settings</h2>
