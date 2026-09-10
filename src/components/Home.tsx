@@ -113,6 +113,12 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     if (added.length === 1 && !failed.length) setView({ kind: 'flow', flowId: added[0].id });
   }
 
+  async function saveNotes(flow: FlowMeta, notes: string) {
+    const next = flowsIndex.map((f) => (f.id === flow.id ? { ...f, notes: notes || undefined } : f));
+    setFlowsIndex(next);
+    await writeKey('flows_index', next);
+  }
+
   async function removeFlow(flow: FlowMeta) {
     const next = flowsIndex.filter((f) => f.id !== flow.id);
     setFlowsIndex(next);
@@ -205,6 +211,7 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
                   onOpen={() => setView({ kind: 'flow', flowId: f.id })}
                   onRemove={() => void removeFlow(f)}
                   onAnalyze={() => void openAnalyze(f)}
+                  onNotes={(notes) => void saveNotes(f, notes)}
                 />
               </li>
             ))}
@@ -231,10 +238,13 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
  * actually holds a cell, so how far into the round a flow got is legible
  * without opening it.
  */
-function FlowCard({ flow, onOpen, onRemove, onAnalyze }: {
+function FlowCard({ flow, onOpen, onRemove, onAnalyze, onNotes }: {
   flow: FlowMeta; onOpen: () => void; onRemove: () => void; onAnalyze: () => void;
+  onNotes: (notes: string) => void;
 }) {
   const [fill, setFill] = useState<number[]>([]);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [draft, setDraft] = useState(flow.notes ?? '');
   // The same two colours the grid paints its columns with, so the strip reads
   // as a miniature of the actual flow rather than a differently-coloured chart.
   const { affColor, negColor } = readSettings();
@@ -243,14 +253,14 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze }: {
     let cancelled = false;
     readKey<any>(`flow_data_${flow.id}`).then((data) => {
       if (cancelled) return;
-      setFill(columnFill(data?.sheets?.[0]?.cells));
+      setFill(columnFill(data?.sheets));
     });
     return () => { cancelled = true; };
   }, [flow.id]);
 
   return (
     <div
-      className="group relative rounded-[13px] border overflow-hidden cursor-pointer transition-colors"
+      className="group relative rounded-[13px] border cursor-pointer transition-colors"
       style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)', boxShadow: 'var(--shadow-card)' }}
       onClick={onOpen}
       role="button"
@@ -258,8 +268,12 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze }: {
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
     >
       <div
-        className="h-[74px] px-4 pt-3.5 flex items-start gap-[5px] border-b"
-        style={{ background: 'var(--bg-nest)', borderColor: 'var(--border-subtle)' }}
+        className="h-[74px] px-4 pt-3.5 flex items-start gap-[5px] border-b overflow-hidden"
+        style={{
+          background: 'var(--bg-nest)',
+          borderColor: 'var(--border-subtle)',
+          borderTopLeftRadius: 12, borderTopRightRadius: 12,
+        }}
         aria-hidden="true"
       >
         {fill.map((rows, ci) => (
@@ -284,7 +298,48 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze }: {
       </div>
 
       <div className="px-4 pt-3 pb-3.5">
-        <div className="text-sm font-semibold tracking-[-0.005em] line-clamp-1 mb-2">{flow.name}</div>
+        <div className="text-sm font-semibold tracking-[-0.005em] line-clamp-1">{flow.name}</div>
+
+        {/* Scratch notes. Double-click to edit, exactly like renaming a tab —
+            click alone has to stay "open the flow", which is what the whole card
+            does. */}
+        {editingNotes ? (
+          <textarea
+            autoFocus
+            rows={2}
+            maxLength={280}
+            value={draft}
+            placeholder="Opponent, judge, what to fix next time…"
+            className="w-full mt-1.5 mb-2 text-xs rounded-[7px] px-2 py-1.5 resize-none"
+            style={{
+              background: 'var(--bg-nest)',
+              border: '1px solid var(--accent)',
+              color: 'rgb(var(--ink-rgb))',
+              outline: 'none',
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onBlur={() => { setEditingNotes(false); onNotes(draft.trim()); }}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Escape') { setDraft(flow.notes ?? ''); setEditingNotes(false); }
+              // Enter saves; Shift+Enter keeps a second line, since these run to
+              // two lines often enough to be worth it.
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); (e.currentTarget as HTMLTextAreaElement).blur(); }
+            }}
+          />
+        ) : (
+          <div
+            className="text-xs mt-1 mb-2 line-clamp-2 min-h-[16px]"
+            style={{ color: flow.notes ? 'var(--ink-muted)' : 'var(--placeholder)' }}
+            onDoubleClick={(e) => { e.stopPropagation(); setDraft(flow.notes ?? ''); setEditingNotes(true); }}
+            title="Double-click to write a note"
+          >
+            {flow.notes || 'Double-click to add a note'}
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
           {flow.live ? (
             <span className="pill pill-live"><span className="w-[5px] h-[5px] rounded-full bg-current" />Live</span>
@@ -303,23 +358,33 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze }: {
         </div>
       </div>
 
-      <div className="absolute top-2.5 right-2.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-        <Tooltip text="Analyze this round" up>
+      <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        <Tooltip text="Read the whole round and say who's ahead">
           <button
-            className="btn-icon ai-glow-ring h-6 px-2 rounded-md text-[11px] font-semibold"
-            style={{ background: 'var(--bg-elevated)', color: 'var(--ink)' }}
+            className="ai-glow-ring shrink-0 inline-flex items-center justify-center rounded-md text-[11px] font-semibold whitespace-nowrap"
+            style={{
+              height: 26, padding: '0 10px',
+              background: 'var(--bg-elevated)', color: 'var(--ink)',
+              border: '1px solid var(--border-subtle)',
+            }}
             onClick={(e) => { e.stopPropagation(); onAnalyze(); }}
           >
             Analyze
           </button>
         </Tooltip>
-        <Tooltip text={flow.shared ? 'Remove from your list' : 'Delete flow'} up>
+        <Tooltip text={flow.shared ? 'Remove from your list' : 'Delete flow'}>
           <button
-            className="btn-icon w-6 h-6 rounded-md"
-            style={{ background: 'var(--bg-elevated)', color: 'var(--ink-muted)' }}
+            className="shrink-0 inline-flex items-center justify-center rounded-md transition-colors"
+            style={{
+              width: 26, height: 26,
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--danger)',
+            }}
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            aria-label={flow.shared ? 'Remove from your list' : 'Delete flow'}
           >
-            <IcoClose />
+            <IcoTrash />
           </button>
         </Tooltip>
       </div>
@@ -328,18 +393,39 @@ function FlowCard({ flow, onOpen, onRemove, onAnalyze }: {
 }
 
 /**
- * How many rows each of the seven speech columns holds, capped at four ticks —
- * the strip is a shape to recognise, not a count to read.
+ * How full each of the seven speech columns is, averaged across every tab that
+ * has anything on it — so the strip describes the whole flow, not whichever tab
+ * happens to be first.
+ *
+ * Empty tabs are excluded rather than averaged in as zeroes: a flow with one
+ * heavily-worked advantage and six untouched off-case tabs is a busy flow, and
+ * counting the blanks would flatten it to almost nothing.
+ *
+ * Capped at four ticks. This is a shape to recognise at a glance, not a count
+ * to read.
  */
-function columnFill(cells: Record<string, string> | undefined): number[] {
-  const counts = new Array(7).fill(0);
-  for (const key in cells ?? {}) {
-    const val = cells![key];
-    if (!val || !val.replace(/<[^>]*>/g, '').trim()) continue;
-    const ci = parseInt(key.split('-')[1] ?? '', 10);
-    if (ci >= 0 && ci < 7) counts[ci] = Math.min(4, counts[ci] + 1);
+function columnFill(sheets: { cells?: Record<string, string> }[] | undefined): number[] {
+  const totals = new Array(7).fill(0);
+  let tabsCounted = 0;
+
+  for (const sheet of sheets ?? []) {
+    const perColumn = new Array(7).fill(0);
+    let anyContent = false;
+    for (const key in sheet?.cells ?? {}) {
+      const val = sheet.cells![key];
+      if (!val || !val.replace(/<[^>]*>/g, '').trim()) continue;
+      const ci = parseInt(key.split('-')[1] ?? '', 10);
+      if (ci >= 0 && ci < 7) { perColumn[ci] += 1; anyContent = true; }
+    }
+    if (!anyContent) continue;
+    tabsCounted++;
+    for (let i = 0; i < 7; i++) totals[i] += perColumn[i];
   }
-  return counts;
+
+  if (tabsCounted === 0) return totals;
+  // Round up, so a column that averages even a fraction of an argument still
+  // shows one tick rather than disappearing.
+  return totals.map((t) => Math.min(4, Math.ceil(t / tabsCounted)));
 }
 
 function IcoPlus() {
@@ -360,6 +446,13 @@ function IcoCloud() {
 function IcoDevice() {
   return <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="13" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /></svg>;
 }
-function IcoClose() {
-  return <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
+function IcoTrash() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  );
 }

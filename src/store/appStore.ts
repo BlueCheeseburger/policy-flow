@@ -21,6 +21,9 @@ export interface FlowMeta {
   shareToken?: string;
   /** ISO timestamp set at creation — drives the grid's "newest first" order. */
   createdAt?: string;
+  /** A short scratch note shown on the flow's card — opponent, round, judge,
+   * whatever you'd otherwise forget between rounds. Lives on the card only. */
+  notes?: string;
 }
 
 export type View =
