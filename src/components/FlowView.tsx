@@ -37,6 +37,10 @@ import Logo from './Logo';
 const FIND_HL = 'flow-find';
 const FIND_HL_CURRENT = 'flow-find-current';
 
+// True on macOS — used to show ⌘ vs Ctrl in tips and tooltips.
+const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? navigator.userAgent);
+const mod = isMac ? '⌘' : 'Ctrl';
+
 // Stable per-user cursor color (hash the user id into a fixed palette).
 const PRESENCE_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#9333ea', '#0891b2', '#db2777', '#0d9488'];
 function colorForUser(id: string): string {
@@ -298,6 +302,9 @@ export default function FlowView() {
   // What the "add rows" field is set to. Google Sheets defaults this to 100 and
   // debaters coming from it expect the same number sitting there.
   const [addRowsCount, setAddRowsCount] = useState('100');
+  const [tipDismissed, setTipDismissed] = useState(
+    () => localStorage.getItem('pf-tips-dismissed') === '1'
+  );
 
   // Default side colors, straight from Settings. These used to be read from
   // two standalone localStorage keys that nothing in this app ever wrote — a
@@ -3279,6 +3286,77 @@ export default function FlowView() {
           >+</button>
         </Tooltip>
       </div>
+
+      {/* ── First-flow onboarding tip ────────────────────────────────────────
+          Shown only on a user's very first flow (flowsIndex has exactly one
+          entry) until they dismiss it. Disappears forever once closed. */}
+      {!tipDismissed && flowsIndex.length <= 1 && (
+        <div
+          className="fixed bottom-5 right-5 z-50 rounded-2xl shadow-2xl px-5 py-4"
+          style={{
+            maxWidth: 300,
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.18), 0 1.5px 6px rgba(0,0,0,0.10)',
+          }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[13px] font-semibold" style={{ color: 'var(--nav-active-color)' }}>
+              Quick tips
+            </span>
+            <button
+              className="btn-icon w-5 h-5 flex items-center justify-center rounded-full text-xs"
+              style={{ color: 'var(--ink-muted)' }}
+              aria-label="Dismiss tips"
+              onClick={() => { localStorage.setItem('pf-tips-dismissed', '1'); setTipDismissed(true); }}
+            >✕</button>
+          </div>
+
+          {/* Tips list */}
+          <div className="flex flex-col gap-3">
+            {([
+              {
+                keys: [`${mod}`, `↑↓←→`],
+                desc: 'Move a cell (with its contents) in any direction',
+              },
+              {
+                keys: [`${mod}`, 'click'],
+                desc: 'Select multiple cells to move or emphasize them as a group',
+              },
+              {
+                keys: [`${mod}`, 'L'],
+                desc: 'Draw a connecting line between two cells',
+              },
+            ] as { keys: string[]; desc: string }[]).map(({ keys, desc }, i) => (
+              <div key={i} className="flex items-start gap-2.5">
+                {/* Key chips */}
+                <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                  {keys.map((k, ki) => (
+                    <React.Fragment key={ki}>
+                      {ki > 0 && <span className="text-[10px]" style={{ color: 'var(--ink-muted)' }}>+</span>}
+                      <kbd
+                        className="inline-flex items-center justify-center rounded-md text-[11px] font-semibold px-1.5"
+                        style={{
+                          minWidth: 22, height: 20,
+                          background: 'var(--bg-nest)',
+                          border: '1px solid var(--border-med)',
+                          color: 'var(--nav-active-color)',
+                          fontFamily: 'var(--font-mono)',
+                          boxShadow: '0 1px 0 var(--border-med)',
+                        }}
+                      >{k}</kbd>
+                    </React.Fragment>
+                  ))}
+                </div>
+                <span className="text-[12px] leading-snug" style={{ color: 'var(--ink-muted)' }}>
+                  {desc}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
