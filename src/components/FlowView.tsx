@@ -2697,7 +2697,7 @@ export default function FlowView() {
           const title = !liveReady
             ? 'Connecting to live session…'
             : connected
-            ? `Live — editing together in realtime${remoteCursors.length ? ` with ${remoteCursors.map((c) => c.user.name).join(', ')}` : ' (no one else here yet)'}`
+            ? `Live — editing together in realtime${remoteCursors.length ? ` with ${remoteCursors.length} other ${remoteCursors.length === 1 ? 'person' : 'people'}` : ' (no one else here yet)'}`
             : 'Connection dropped — reconnecting. Your edits are still saving locally and will sync once back online.';
           return (
           <div
@@ -2715,10 +2715,10 @@ export default function FlowView() {
               {remoteCursors.slice(0, 4).map((c) => (
                 <span
                   key={c.user.id}
-                  className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
+                  className="w-4 h-4 rounded-full"
                   style={{ background: c.user.color, border: '1px solid var(--bg-elevated)' }}
-                  title={c.user.name}
-                >{c.user.name[0]?.toUpperCase()}</span>
+                  aria-label="Someone else editing"
+                />
               ))}
             </div>
             <Tooltip text="Leave live session">
@@ -3071,14 +3071,10 @@ export default function FlowView() {
                     onMouseEnter={() => setHoveredCell({ ri, ci })}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
-                    {remoteCur && (
-                      <div
-                        className="absolute z-10 px-1.5 py-0.5 rounded text-[9px] font-semibold pointer-events-none whitespace-nowrap"
-                        style={{ top: -9, left: 4, background: remoteCur.user.color, color: '#fff' }}
-                      >
-                        {remoteCur.user.name}
-                      </div>
-                    )}
+                    {/* A peer in this cell shows as the coloured ring below and
+                        nothing else. There is no name to put on a label: presence
+                        here is colours only, and the chip that used to sit here
+                        rendered as an empty coloured box. */}
                     <div
                       key={`${activeSheet?.id ?? 'sheet'}-${cellKey}-${reloadNonce}-${cellNonce}`}
                       ref={(el) => {
