@@ -307,8 +307,14 @@ create table if not exists pf_flow_presence (
   sheet_name  text,
   focused_row int,
   focused_col int,
+  -- True while the user has paused CardMirror delivery via the status chip.
+  -- The tab is still open (this row is fresh) but shouldn't be targeted —
+  -- distinct from a stale/absent row, which means the tab isn't open at all.
+  paused      boolean not null default false,
   updated_at  timestamptz not null default now()
 );
+
+alter table pf_flow_presence add column if not exists paused boolean not null default false;
 
 alter table pf_flow_presence enable row level security;
 

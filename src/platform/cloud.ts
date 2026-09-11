@@ -223,6 +223,10 @@ export async function updatePresence(state: {
       sheet_name: state.sheetName,
       focused_row: state.focusedRow,
       focused_col: state.focusedCol,
+      // Real focus always clears any earlier pause — resuming via the chip
+      // is "start acting normal again," not "start acting normal, but only
+      // once something else also flips paused back off."
+      paused: false,
     }, { onConflict: 'user_id' });
   } catch { /* presence is best-effort; never block the UI */ }
 }
@@ -232,5 +236,17 @@ export async function clearPresence(): Promise<void> {
   try {
     const { sb, userId } = await client();
     await sb.from('pf_flow_presence').delete().eq('user_id', userId);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Mark this browser as paused without deleting its presence row — the tab is
+ * still open, it just shouldn't be targeted. Distinct from clearPresence
+ * (tab closed) so CardMirror can tell "not open" apart from "open, paused."
+ */
+export async function setPresencePaused(paused: boolean): Promise<void> {
+  try {
+    const { sb, userId } = await client();
+    await sb.from('pf_flow_presence').upsert({ user_id: userId, paused }, { onConflict: 'user_id' });
   } catch { /* best-effort */ }
 }

@@ -21,7 +21,7 @@ import { flowDataToXlsxBase64 } from '../utils/flowImport';
 import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
 import { summarizeFlowSheet } from '../platform/aiFeatures';
-import { saveSnapshot as cloudSaveSnapshot, shareUrl, updatePresence, clearPresence, hasApiToken } from '../platform/cloud';
+import { saveSnapshot as cloudSaveSnapshot, shareUrl, updatePresence, clearPresence, setPresencePaused, hasApiToken } from '../platform/cloud';
 import { cloudConfigured, supabase } from '../platform/supabase';
 import { readSettings, SETTINGS_CHANGED_EVENT } from '../platform/settings';
 import { readFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
@@ -1060,11 +1060,16 @@ export default function FlowView() {
   // the right row. Debounced to avoid spamming on rapid arrow-key movement.
   const presenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPresenceKey = useRef('');
+  const pausedSentRef = useRef(false);
   useEffect(() => {
     if (!flowId || !identityId || !cloudConfigured) return;
-    // Paused means "don't let CardMirror target me" — stop advertising focus
-    // rather than let it keep aiming at a flow that won't accept cards.
-    if (cmPaused) { void clearPresence(); return; }
+    // Paused means "don't let CardMirror target me" — mark the row paused
+    // (tab is still open) rather than clearing it (which reads as closed).
+    if (cmPaused) {
+      if (!pausedSentRef.current) { pausedSentRef.current = true; void setPresencePaused(true); }
+      return;
+    }
+    pausedSentRef.current = false;
     const activeSheet = sheets[activeSheetIdx];
     if (!activeSheet) return;
     const fc = focusedCell.current;

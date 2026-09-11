@@ -6,7 +6,9 @@
 //
 // Response (200):
 //   { flowId, flowName, sheetId, sheetName, focusedRow, focusedCol, updatedAt }
-//   or { present: false } when no tab has written presence recently.
+//   or { present: false } when no tab has written presence recently,
+//   or { present: false, paused: true } when a tab IS open but the user
+//   paused delivery via the status chip — distinct from "not open at all".
 //
 // Error responses: 401 (bad/unknown token), 500 (internal).
 
@@ -46,7 +48,7 @@ Deno.serve(async (req) => {
 
     const { data: presence } = await admin
       .from('pf_flow_presence')
-      .select('flow_id, flow_name, sheet_id, sheet_name, focused_row, focused_col, updated_at')
+      .select('flow_id, flow_name, sheet_id, sheet_name, focused_row, focused_col, paused, updated_at')
       .eq('user_id', tokenRow.owner_id)
       .maybeSingle();
 
@@ -54,10 +56,17 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ present: false }), { headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
-    // Treat stale presence (>5 min) as absent — tab probably closed.
+    // Treat stale presence (>5 min since the pause, or since the last real
+    // focus write) as absent — same rule either way, since a paused-and-then-
+    // abandoned tab looks identical to an idle-and-then-closed one: nothing
+    // has refreshed this row since. Only a RECENT pause is reported as such.
     const age = Date.now() - new Date(presence.updated_at).getTime();
     if (age > 5 * 60 * 1000) {
       return new Response(JSON.stringify({ present: false }), { headers: { ...CORS, 'content-type': 'application/json' } });
+    }
+
+    if (presence.paused) {
+      return new Response(JSON.stringify({ present: false, paused: true }), { headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     return new Response(JSON.stringify({
