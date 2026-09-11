@@ -9,7 +9,7 @@ import { useApp } from '../store/appStore';
 export default function UndoToasts() {
   const { undoToasts, dismissUndoToast } = useApp();
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 items-center">
+    <div className="fixed right-4 z-[60] flex flex-col gap-2 items-end" style={{ bottom: 44 }}>
       {undoToasts.map((t) => (
         <Toast key={t.id} id={t.id} message={t.message} onUndo={t.onUndo} onDismiss={dismissUndoToast} />
       ))}

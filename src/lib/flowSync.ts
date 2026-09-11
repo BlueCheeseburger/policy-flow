@@ -23,7 +23,7 @@ import { supabase } from '../platform/supabase';
 import { loadSnapshot, saveSnapshot } from '../platform/cloud';
 
 export interface PresenceUser { id: string; name: string; color: string }
-export interface RemoteCursor { user: PresenceUser; cell: string | null }
+export interface RemoteCursor { user: PresenceUser; sheetId: string | null; cell: string | null }
 
 // SUBSCRIBED = actively syncing. CHANNEL_ERROR/TIMED_OUT/CLOSED = not currently
 // synced — edits still save locally (this doc keeps working offline), they just
@@ -33,7 +33,7 @@ export type FlowSyncStatus = 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'TIMED_OUT' | 'CLO
 export interface FlowSyncHandle {
   doc: Y.Doc;
   awareness: Awareness;
-  setActiveCell: (cell: string | null) => void;
+  setActiveCell: (sheetId: string | null, cell: string | null) => void;
   onCursors: (cb: (cursors: RemoteCursor[]) => void) => () => void;
   /** Current + future connection status. Fires immediately with what's known. */
   onStatus: (cb: (status: FlowSyncStatus) => void) => () => void;
@@ -50,7 +50,7 @@ export async function createFlowSync(
 ): Promise<FlowSyncHandle> {
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
-  awareness.setLocalState({ user: me, cell: null });
+  awareness.setLocalState({ user: me, sheetId: null, cell: null });
 
   const statusSubs = new Set<(s: FlowSyncStatus) => void>();
   let currentStatus: FlowSyncStatus = 'CONNECTING';
@@ -147,7 +147,7 @@ export async function createFlowSync(
     awareness.getStates().forEach((st: any, clientId: number) => {
       if (clientId === doc.clientID) return;          // skip self
       if (!st?.user) return;
-      out.push({ user: st.user, cell: st.cell ?? null });
+      out.push({ user: st.user, sheetId: st.sheetId ?? null, cell: st.cell ?? null });
     });
     cursorSubs.forEach((cb) => cb(out));
   }
@@ -156,7 +156,10 @@ export async function createFlowSync(
   return {
     doc,
     awareness,
-    setActiveCell(cell) { awareness.setLocalStateField('cell', cell); },
+    setActiveCell(sheetId, cell) {
+      awareness.setLocalStateField('sheetId', sheetId);
+      awareness.setLocalStateField('cell', cell);
+    },
     onCursors(cb) {
       cursorSubs.add(cb);
       cb([]);

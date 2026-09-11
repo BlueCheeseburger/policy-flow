@@ -507,9 +507,11 @@ export default function FlowView() {
   const ROW_NUM_WIDTH = 32;
   const gridTemplate = (showGridNumbers ? `${ROW_NUM_WIDTH}px ` : '') + effectiveWidths.map((w) => `${w}px`).join(' ');
 
-  // Which cell (in the active sheet) each remote teammate is currently editing.
+  // Which cell each remote teammate is currently editing — only cursors on THIS
+  // sheet, so a peer focused on a same-numbered cell on a different tab doesn't
+  // show up here (row-col keys collide across sheets, sheetId disambiguates).
   const remoteCursorMap = new Map<string, RemoteCursor>();
-  remoteCursors.forEach((c) => { if (c.cell) remoteCursorMap.set(c.cell, c); });
+  remoteCursors.forEach((c) => { if (c.cell && c.sheetId === activeSheet?.id) remoteCursorMap.set(c.cell, c); });
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -2778,6 +2780,32 @@ export default function FlowView() {
           </Tooltip>
         )}
 
+        {/* CardMirror connection status — sits next to the flow name since it's
+            about this browser's identity, not this specific flow. */}
+        {cloudConfigured && cmBarConnected !== null && (
+          <Tooltip text={cmBarConnected ? 'CardMirror connected — click to disconnect' : 'CardMirror not connected'}>
+            <button
+              className="flex items-center gap-1.5 ml-2 shrink-0 transition-opacity"
+              style={{
+                fontSize: 11,
+                color: cmBarConnected ? 'var(--nav-active-color)' : 'var(--ink-muted)',
+                opacity: cmBarBusy ? 0.5 : 1,
+                cursor: cmBarConnected ? 'pointer' : 'default',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+              }}
+              disabled={cmBarBusy || !cmBarConnected}
+              onClick={cmBarConnected ? handleCmBarDisconnect : undefined}
+            >
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
+                background: cmBarConnected ? '#22c55e' : 'var(--border-med)',
+              }} />
+              CardMirror: {cmBarConnected ? 'Connected' : 'Off'}
+            </button>
+          </Tooltip>
+        )}
 
         <div className="flex-1" />
 
@@ -3180,8 +3208,8 @@ export default function FlowView() {
                       // instead of moving the group.
                       contentEditable={!drawMode && !picked}
                       suppressContentEditableWarning
-                      onFocus={() => { focusedCell.current = cellKey; syncRef.current?.setActiveCell(cellKey); }}
-                      onBlur={(e) => { if (liveRef.current) { pushLiveCell(cellKey, e.currentTarget.innerHTML); syncRef.current?.setActiveCell(null); } }}
+                      onFocus={() => { focusedCell.current = cellKey; syncRef.current?.setActiveCell(activeSheet?.id ?? null, cellKey); }}
+                      onBlur={(e) => { if (liveRef.current) { pushLiveCell(cellKey, e.currentTarget.innerHTML); syncRef.current?.setActiveCell(null, null); } }}
                       onInput={(e) => handleInput(ri, ci, e)}
                       onPaste={(e) => handlePaste(ri, ci, e)}
                       onKeyDown={(e) => handleKeyDown(ri, ci, e)}
@@ -3441,38 +3469,6 @@ export default function FlowView() {
           >+</button>
         </Tooltip>
       </div>
-
-      {/* ── CardMirror status bar ─────────────────────────────────────────────
-          Thin strip showing connection state; clicking when connected revokes.
-          Only visible when cloud is configured (Supabase available). */}
-      {cloudConfigured && cmBarConnected !== null && (
-        <div
-          className="flex items-center justify-end px-3 shrink-0"
-          style={{ height: 20, borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-nest)' }}
-        >
-          <button
-            className="flex items-center gap-1.5 transition-opacity"
-            style={{
-              fontSize: 10,
-              color: cmBarConnected ? 'var(--nav-active-color)' : 'var(--ink-muted)',
-              opacity: cmBarBusy ? 0.5 : 1,
-              cursor: cmBarConnected ? 'pointer' : 'default',
-              background: 'none',
-              border: 'none',
-              padding: 0,
-            }}
-            disabled={cmBarBusy || !cmBarConnected}
-            onClick={cmBarConnected ? handleCmBarDisconnect : undefined}
-            title={cmBarConnected ? 'CardMirror connected — click to disconnect' : 'CardMirror not connected'}
-          >
-            <span style={{
-              width: 5, height: 5, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
-              background: cmBarConnected ? '#22c55e' : 'var(--border-med)',
-            }} />
-            CardMirror: {cmBarConnected ? 'Connected' : 'Off'}
-          </button>
-        </div>
-      )}
 
       {/* ── First-flow onboarding tip ────────────────────────────────────────
           Shown only on a user's very first flow (flowsIndex has exactly one
