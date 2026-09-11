@@ -242,3 +242,76 @@ grant execute on function pf_claim_transfer(text) to authenticated;
 revoke execute on function pf_join_flow(text) from anon;
 revoke execute on function pf_create_transfer() from anon;
 revoke execute on function pf_claim_transfer(text) from anon;
+
+-- ── CardMirror integration ────────────────────────────────────────────────────
+-- Personal API tokens let external desktop apps (CardMirror) authenticate as a
+-- specific browser identity without sharing the session JWT. Tokens are opaque
+-- random strings shown once; only their SHA-256 hash is stored here.
+
+create table if not exists pf_api_tokens (
+  id          uuid primary key default gen_random_uuid(),
+  owner_id    uuid not null references auth.users(id) on delete cascade,
+  token_hash  text not null unique,  -- SHA-256(raw) hex, never the raw token
+  label       text not null default 'CardMirror',
+  created_at  timestamptz not null default now()
+);
+
+alter table pf_api_tokens enable row level security;
+
+drop policy if exists "pf_api_tokens_owner" on pf_api_tokens;
+create policy "pf_api_tokens_owner" on pf_api_tokens
+  for all using (owner_id = auth.uid());
+
+-- Mint a token: generates a random 48-hex-char string, stores its hash, returns
+-- the raw value. The raw token is never stored and never recoverable after this.
+create or replace function pf_create_api_token(token_label text default 'CardMirror')
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  raw_token text;
+  hashed    text;
+begin
+  if auth.uid() is null then raise exception 'Not signed in.'; end if;
+  -- Allow at most one token per user (one external pairing at a time).
+  delete from pf_api_tokens where owner_id = auth.uid();
+  raw_token := encode(gen_random_bytes(24), 'hex');
+  hashed    := encode(digest(raw_token, 'sha256'), 'hex');
+  insert into pf_api_tokens (owner_id, token_hash, label)
+    values (auth.uid(), hashed, token_label);
+  return raw_token;
+end $$;
+
+revoke all on function pf_create_api_token(text) from public;
+grant execute on function pf_create_api_token(text) to authenticated;
+revoke execute on function pf_create_api_token(text) from anon;
+
+create or replace function pf_revoke_api_token()
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from pf_api_tokens where owner_id = auth.uid();
+end $$;
+
+revoke all on function pf_revoke_api_token() from public;
+grant execute on function pf_revoke_api_token() to authenticated;
+revoke execute on function pf_revoke_api_token() from anon;
+
+-- Presence: one row per user. The open flow tab upserts this whenever the
+-- focused cell or active sheet changes. Edge Functions read it with the service
+-- role key (bypassing RLS) when CardMirror queries for the current focus state.
+create table if not exists pf_flow_presence (
+  user_id     uuid primary key references auth.users(id) on delete cascade,
+  flow_id     text,
+  flow_name   text,
+  sheet_id    text,
+  sheet_name  text,
+  focused_row int,
+  focused_col int,
+  updated_at  timestamptz not null default now()
+);
+
+alter table pf_flow_presence enable row level security;
+
+drop policy if exists "pf_presence_owner" on pf_flow_presence;
+create policy "pf_presence_owner" on pf_flow_presence
+  for all using (user_id = auth.uid());

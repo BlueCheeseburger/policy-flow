@@ -172,3 +172,65 @@ export async function claimTransferCode(code: string): Promise<CloudResult<numbe
     return { ok: true, data: Number(data) || 0 };
   } catch (e) { return fail(e); }
 }
+
+// ── CardMirror API token ──────────────────────────────────────────────────────
+
+/** Mint a new token (revokes any existing one). Returns the raw token shown once. */
+export async function createApiToken(): Promise<CloudResult<string>> {
+  try {
+    const { sb } = await client();
+    const { data, error } = await sb.rpc('pf_create_api_token', { token_label: 'CardMirror' });
+    if (error) throw error;
+    return { ok: true, data: String(data) };
+  } catch (e) { return fail(e); }
+}
+
+/** Revoke all tokens for this user. */
+export async function revokeApiToken(): Promise<CloudResult<null>> {
+  try {
+    const { sb } = await client();
+    const { error } = await sb.rpc('pf_revoke_api_token');
+    if (error) throw error;
+    return { ok: true, data: null };
+  } catch (e) { return fail(e); }
+}
+
+/** True if this user has a token on file (does not expose the hash). */
+export async function hasApiToken(): Promise<CloudResult<boolean>> {
+  try {
+    const { sb } = await client();
+    const { count, error } = await sb
+      .from('pf_api_tokens')
+      .select('id', { count: 'exact', head: true });
+    if (error) throw error;
+    return { ok: true, data: (count ?? 0) > 0 };
+  } catch (e) { return fail(e); }
+}
+
+/** Push the current focus state so CardMirror can target the right cell. */
+export async function updatePresence(state: {
+  flowId: string; flowName: string;
+  sheetId: string; sheetName: string;
+  focusedRow: number; focusedCol: number;
+}): Promise<void> {
+  try {
+    const { sb, userId } = await client();
+    await sb.from('pf_flow_presence').upsert({
+      user_id: userId,
+      flow_id: state.flowId,
+      flow_name: state.flowName,
+      sheet_id: state.sheetId,
+      sheet_name: state.sheetName,
+      focused_row: state.focusedRow,
+      focused_col: state.focusedCol,
+    }, { onConflict: 'user_id' });
+  } catch { /* presence is best-effort; never block the UI */ }
+}
+
+/** Clear presence when the flow tab closes. */
+export async function clearPresence(): Promise<void> {
+  try {
+    const { sb, userId } = await client();
+    await sb.from('pf_flow_presence').delete().eq('user_id', userId);
+  } catch { /* best-effort */ }
+}

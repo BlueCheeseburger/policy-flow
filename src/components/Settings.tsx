@@ -3,7 +3,8 @@ import { useApp } from '../store/appStore';
 import { listLmStudioModels, promptNames, promptSource } from '../platform/ai';
 import { aiConfigured } from '../platform/settings';
 import { readFlowPrefs, writeFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
-import { createTransferCode, claimTransferCode } from '../platform/cloud';
+import { createTransferCode, claimTransferCode, createApiToken, revokeApiToken, hasApiToken } from '../platform/cloud';
+import { cloudConfigured } from '../platform/supabase';
 import { clearAll } from '../platform/storage';
 import Tooltip from './Tooltip';
 import {
@@ -24,6 +25,14 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [showPrompt, setShowPrompt] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  // CardMirror pairing
+  const [cmToken, setCmToken] = useState('');          // raw token shown once after generation
+  const [cmConnected, setCmConnected] = useState<boolean | null>(null); // null = loading
+  const [cmBusy, setCmBusy] = useState(false);
+  useEffect(() => {
+    if (!cloudConfigured) return;
+    hasApiToken().then((r) => setCmConnected(r.ok ? r.data : false));
+  }, []);
   // Flow defaults live in their own store (lib/flowPrefs) because FlowView and
   // Home read them directly. Nothing in this app wrote them until now, which
   // left every one of them frozen at its default — including the one below that
@@ -82,6 +91,59 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             </div>
           </Row>
         </Section>
+
+        {cloudConfigured && (
+          <Section title="CardMirror">
+            <p className="text-sm leading-relaxed">
+              Generate a pairing code, paste it into CardMirror's Settings once, and CardMirror can send taglines directly into whichever cell is focused here.
+              The code grants access to all your flows and is tied to this browser — if you clear site data you'll need to re-pair.
+            </p>
+            {cmToken ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-xs" style={{ color: 'var(--label-color)' }}>Copy this code into CardMirror now — it won't be shown again.</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code
+                    className="px-3 h-8 inline-flex items-center rounded-[9px] font-mono text-sm tracking-[0.12em] select-all"
+                    style={{ background: 'var(--bg-nest)', border: '1px solid var(--border-med)' }}
+                  >{cmToken}</code>
+                  <button
+                    className="btn h-8 px-3"
+                    onClick={() => { void navigator.clipboard.writeText(cmToken); }}
+                  >Copy</button>
+                  <button className="btn h-8 px-3" onClick={() => setCmToken('')}>Done</button>
+                </div>
+              </div>
+            ) : cmConnected ? (
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--accent)' }} />
+                  Connected
+                </span>
+                <button
+                  className="btn h-8 px-3"
+                  disabled={cmBusy}
+                  onClick={async () => {
+                    setCmBusy(true);
+                    const res = await revokeApiToken();
+                    if (res.ok) { setCmConnected(false); setCmToken(''); }
+                    setCmBusy(false);
+                  }}
+                >Disconnect</button>
+              </div>
+            ) : (
+              <button
+                className="btn h-8 px-3 self-start"
+                disabled={cmBusy || cmConnected === null}
+                onClick={async () => {
+                  setCmBusy(true);
+                  const res = await createApiToken();
+                  if (res.ok) { setCmToken(res.data); setCmConnected(true); }
+                  setCmBusy(false);
+                }}
+              >{cmConnected === null ? 'Checking…' : 'Generate pairing code'}</button>
+            )}
+          </Section>
+        )}
 
         <Section title="Keyboard shortcuts" intro="Rebind or switch off any of these. Core keys — Enter, Tab, arrows — stay fixed.">
           <Shortcuts />

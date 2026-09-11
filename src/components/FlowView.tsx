@@ -21,8 +21,8 @@ import { flowDataToXlsxBase64 } from '../utils/flowImport';
 import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
 import { summarizeFlowSheet } from '../platform/aiFeatures';
-import { saveSnapshot as cloudSaveSnapshot, shareUrl } from '../platform/cloud';
-import { cloudConfigured } from '../platform/supabase';
+import { saveSnapshot as cloudSaveSnapshot, shareUrl, updatePresence, clearPresence } from '../platform/cloud';
+import { cloudConfigured, supabase } from '../platform/supabase';
 import { readSettings, SETTINGS_CHANGED_EVENT } from '../platform/settings';
 import { readFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
 import { planStockIssueConversion, StockIssuePlan } from '../lib/stockIssueSuggest';
@@ -1034,6 +1034,76 @@ export default function FlowView() {
     window.history.replaceState(null, '', url);
     return () => { window.history.replaceState(null, '', '/'); };
   }, [flowId, flowMeta?.shareToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── CardMirror presence publishing ────────────────────────────────────────────
+  // Write the focused cell + sheet to pf_flow_presence so CardMirror can target
+  // the right row. Debounced to avoid spamming on rapid arrow-key movement.
+  const presenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPresenceKey = useRef('');
+  useEffect(() => {
+    if (!flowId || !identityId || !cloudConfigured) return;
+    const activeSheet = sheets[activeSheetIdx];
+    if (!activeSheet) return;
+    const fc = focusedCell.current;
+    const [ri, ci] = fc ? fc.split('-').map(Number) : [0, 0];
+    const key = `${flowId}:${activeSheet.id}:${ri}:${ci}`;
+    if (key === lastPresenceKey.current) return;
+    lastPresenceKey.current = key;
+    if (presenceTimer.current) clearTimeout(presenceTimer.current);
+    presenceTimer.current = setTimeout(() => {
+      updatePresence({
+        flowId, flowName: flowMeta?.name ?? 'Flow',
+        sheetId: activeSheet.id, sheetName: activeSheet.name,
+        focusedRow: isNaN(ri) ? 0 : ri, focusedCol: isNaN(ci) ? 0 : ci,
+      });
+    }, 400);
+    return () => { if (presenceTimer.current) clearTimeout(presenceTimer.current); };
+  }); // intentionally runs every render — tracks every focus/sheet change
+
+  // Clear presence when this flow view unmounts (tab closed or navigated away).
+  useEffect(() => {
+    if (!flowId || !cloudConfigured) return;
+    return () => { void clearPresence(); };
+  }, [flowId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── CardMirror broadcast listener ─────────────────────────────────────────────
+  // Receives { taglineText, authorDate, sheetId?, targetRow, targetCol } from
+  // pf-send-card and applies it as a cell edit, then advances focus down one row.
+  useEffect(() => {
+    if (!identityId || !supabase || !cloudConfigured) return;
+    const channel = supabase
+      .channel(`pf:user:${identityId}`)
+      .on('broadcast', { event: 'pf-card' }, ({ payload }: any) => {
+        const { taglineText, authorDate, targetRow, targetCol } = payload ?? {};
+        if (typeof taglineText !== 'string' || typeof authorDate !== 'string') return;
+        const ci: number = typeof targetCol === 'number' ? targetCol : (focusedCell.current ? Number(focusedCell.current.split('-')[1]) : 0);
+        let ri: number = typeof targetRow === 'number' ? targetRow : (focusedCell.current ? Number(focusedCell.current.split('-')[0]) : 0);
+        // Walk forward to the next empty cell in this column.
+        while (ri < snap.current.numRows) {
+          const existing = cellsRef.current[`${ri}-${ci}`];
+          if (!existing || !existing.replace(/<[^>]*>/g, '').trim()) break;
+          ri++;
+        }
+        if (ri >= snap.current.numRows) return; // grid full in this column
+        // Build as plain text (entity-escaped) then sanitize through the same
+        // path every other cell edit uses, so CardMirror can't inject markup.
+        const tmp = document.createElement('div');
+        tmp.textContent = `${taglineText} — ${authorDate}`;
+        const html = sanitizeCellHtml(tmp.innerHTML);
+        cellsRef.current[`${ri}-${ci}`] = html;
+        dirtyKeys.current.add(`${ri}-${ci}`);
+        const el = cellEls.current[`${ri}-${ci}`];
+        if (el) { el.innerHTML = html; }
+        noteCellEdit(`${ri}-${ci}`, html);
+        // Advance focus one row down.
+        const nextRi = ri + 1;
+        if (nextRi < snap.current.numRows) {
+          setTimeout(() => focusCell(`${nextRi}-${ci}`, 'start'), 0);
+        }
+      })
+      .subscribe();
+    return () => { void supabase!.removeChannel(channel); };
+  }, [identityId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Live observers: meta/sheets (structural) + active-sheet cells (text) ─────
   useEffect(() => {
