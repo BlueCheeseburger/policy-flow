@@ -138,15 +138,27 @@ export function docToData(doc: Y.Doc): FlowDocData | null {
   const meta = metaMap(doc);
   const sheets = sheetsArr(doc);
   if (sheets.length === 0 || !meta.get('event')) return null;
-  const outSheets = [] as FlowDocData['sheets'];
+  // Two independently-seeded docs for the same flow (see the comment on
+  // startLiveCollab in FlowView) have no shared causal history, so merging
+  // them can leave two Y.Map entries with the same sheet id. Read-time
+  // dedup self-heals any flow already left in that state: keep whichever
+  // duplicate actually has content, so a stray empty copy never wins over
+  // real work, and never reorder past the first occurrence's slot.
+  const byId = new Map<string, FlowDocData['sheets'][number]>();
   for (let i = 0; i < sheets.length; i++) {
     const sm = sheets.get(i);
     const cellsMap = sheetCells(sm);
     const cells: Record<string, string> = {};
     cellsMap.forEach((t, k) => { const v = t.toString(); if (v) cells[k] = v; });
     const arrows = (sheetArrows(sm)?.toArray() ?? []) as FlowArrowLike[];
-    outSheets.push({ id: sm.get('id'), name: sm.get('name'), cells, arrows });
+    const id = sm.get('id');
+    const entry = { id, name: sm.get('name'), cells, arrows };
+    const existing = byId.get(id);
+    if (!existing || Object.keys(cells).length >= Object.keys(existing.cells).length) {
+      byId.set(id, entry);
+    }
   }
+  const outSheets = Array.from(byId.values());
   return {
     event: meta.get('event'),
     variant: meta.get('variant') ?? 'stock-issues',

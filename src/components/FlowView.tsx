@@ -957,8 +957,12 @@ export default function FlowView() {
       cellsRef.current = { ...(data.sheets[idx]?.cells ?? {}) }; cellsOwnerId.current = data.sheets[idx]?.id ?? null;
       if (opts.remountCells) setCellNonce((n) => n + 1);
     } finally {
-      // release on the next tick so setState-driven persists don't echo back
-      requestAnimationFrame(() => { applyingRemote.current = false; });
+      // Release on the next tick so setState-driven persists don't echo back.
+      // setTimeout, not requestAnimationFrame: rAF is throttled/paused for a
+      // backgrounded or occluded window, so if this tab isn't in the
+      // foreground the flag could stay stuck true — silently dropping every
+      // local edit this user makes until they switch back to it.
+      setTimeout(() => { applyingRemote.current = false; }, 0);
     }
   }
 
@@ -1164,7 +1168,7 @@ export default function FlowView() {
             });
           }
         });
-      } finally { requestAnimationFrame(() => { applyingRemote.current = false; }); }
+      } finally { setTimeout(() => { applyingRemote.current = false; }, 0); }
     };
     cells.observeDeep(onCells);
     return () => cells.unobserveDeep(onCells);
@@ -1180,10 +1184,25 @@ export default function FlowView() {
   async function startLiveCollab(): Promise<{ ok: boolean; shareToken?: string; error?: string }> {
     if (!flowId || !identityId) return { ok: false, error: 'Still connecting — try again in a moment.' };
     setLiveStarting(true);
-    const seed = new Y.Doc();
-    seedDoc(seed, currentDataForDoc(), cellToHtml);
-    const content = u8ToB64(Y.encodeStateAsUpdate(seed));
-    seed.destroy();
+    // Every flow already has a running sync doc by the time this can be
+    // clicked (identity resolves on load, which is what turns `live` on) —
+    // reuse ITS encoded state rather than building an unrelated Y.Doc from
+    // scratch. Two independently-seeded docs for the same flow share no
+    // causal history: Yjs treats their sheets as distinct items even when
+    // the id fields match, so the moment a second peer joins and this
+    // browser's doc catches them up over broadcast, the two seedings merge
+    // as a UNION instead of converging — every sheet doubled, including
+    // ones already deleted from the doc actually being edited.
+    const handle = syncRef.current;
+    let content: string;
+    if (handle) {
+      content = u8ToB64(Y.encodeStateAsUpdate(handle.doc));
+    } else {
+      const seed = new Y.Doc();
+      seedDoc(seed, currentDataForDoc(), cellToHtml);
+      content = u8ToB64(Y.encodeStateAsUpdate(seed));
+      seed.destroy();
+    }
 
     // The cloud row may not exist yet (a flow made offline, or one imported
     // from xlsx before the identity resolved), so create it on demand.
@@ -3040,7 +3059,7 @@ export default function FlowView() {
               return (
                 <div
                   key={ci}
-                  className="relative flex items-center"
+                  className="relative flex items-center justify-center"
                   onContextMenu={(e) => { e.preventDefault(); setColMenu(ci); }}
                   style={{
                     background: colBg(colColor(ci), dark, true),
