@@ -57,7 +57,7 @@ export const FLOW_PREFS_DEFAULTS: FlowPrefs = {
   defaultZoom: 100,
   defaultFontSize: 13,
   autoFitColumns: true,
-  aiTabSummaries: true,
+  aiTabSummaries: false,
   rowHeight: 32,
   cellFont: 'sans',
   showGridNumbers: false,
