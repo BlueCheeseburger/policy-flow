@@ -418,6 +418,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                     placeholder="Paste a code from your other browser"
                     value={claimInput}
                     spellCheck={false}
+                    autoComplete="off"
                     onChange={(e) => setClaimInput(e.target.value)}
                   />
                   <button
