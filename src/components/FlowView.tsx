@@ -21,7 +21,7 @@ import { flowDataToXlsxBase64 } from '../utils/flowImport';
 import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
 import { summarizeFlowSheet } from '../platform/aiFeatures';
-import { saveSnapshot as cloudSaveSnapshot, shareUrl, updatePresence, clearPresence, hasApiToken, revokeApiToken } from '../platform/cloud';
+import { saveSnapshot as cloudSaveSnapshot, shareUrl, updatePresence, clearPresence, hasApiToken } from '../platform/cloud';
 import { cloudConfigured, supabase } from '../platform/supabase';
 import { readSettings, SETTINGS_CHANGED_EVENT } from '../platform/settings';
 import { readFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
@@ -308,9 +308,19 @@ export default function FlowView() {
     () => localStorage.getItem('pf-tips-dismissed') === '1'
   );
 
-  // CardMirror status bar — null = checking, true = connected, false = off
-  const [cmBarConnected, setCmBarConnected] = useState<boolean | null>(null);
-  const [cmBarBusy, setCmBarBusy] = useState(false);
+  // CardMirror status chip. Two independent things decide what it shows:
+  // whether a token still exists server-side (cmTokenValid — null while the
+  // first check is in flight), and whether THIS browser has locally paused
+  // delivery (cmPaused). Pausing is a local, instant, no-RPC toggle — not a
+  // revoke — so clicking the chip is always reversible with no re-pairing.
+  // The actual hard revoke (deleting the token) lives only in Settings'
+  // Disconnect button.
+  const [cmTokenValid, setCmTokenValid] = useState<boolean | null>(null);
+  const [cmPaused, setCmPaused] = useState(() => localStorage.getItem('pf-cardmirror-paused') === '1');
+  // Read from effects with a narrower dependency array than [cmPaused] itself
+  // (the broadcast listener below only re-subscribes on [identityId]).
+  const cmPausedRef = useRef(cmPaused);
+  useEffect(() => { cmPausedRef.current = cmPaused; }, [cmPaused]);
 
   // Default side colors, straight from Settings. These used to be read from
   // two standalone localStorage keys that nothing in this app ever wrote — a
@@ -1052,6 +1062,9 @@ export default function FlowView() {
   const lastPresenceKey = useRef('');
   useEffect(() => {
     if (!flowId || !identityId || !cloudConfigured) return;
+    // Paused means "don't let CardMirror target me" — stop advertising focus
+    // rather than let it keep aiming at a flow that won't accept cards.
+    if (cmPaused) { void clearPresence(); return; }
     const activeSheet = sheets[activeSheetIdx];
     if (!activeSheet) return;
     const fc = focusedCell.current;
@@ -1084,6 +1097,7 @@ export default function FlowView() {
     const channel = supabase
       .channel(`pf:user:${identityId}`)
       .on('broadcast', { event: 'pf-card' }, ({ payload }: any) => {
+        if (cmPausedRef.current) return;
         const { taglineText, authorDate, targetRow, targetCol } = payload ?? {};
         if (typeof taglineText !== 'string' || typeof authorDate !== 'string') return;
         const ci: number = typeof targetCol === 'number' ? targetCol : (focusedCell.current ? Number(focusedCell.current.split('-')[1]) : 0);
@@ -1115,24 +1129,27 @@ export default function FlowView() {
     return () => { void supabase!.removeChannel(channel); };
   }, [identityId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── CardMirror status bar poll ────────────────────────────────────────────────
+  // ── CardMirror status chip poll ───────────────────────────────────────────────
   useEffect(() => {
     if (!cloudConfigured) return;
     let cancelled = false;
     async function check() {
       const r = await hasApiToken();
-      if (!cancelled) setCmBarConnected(r.ok ? r.data : false);
+      if (!cancelled) setCmTokenValid(r.ok ? r.data : false);
     }
     check();
     const id = setInterval(check, 30_000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  async function handleCmBarDisconnect() {
-    setCmBarBusy(true);
-    await revokeApiToken();
-    setCmBarConnected(false);
-    setCmBarBusy(false);
+  // Local-only, instant, reversible in either direction — never touches the
+  // token. A real unpair is Settings' Disconnect button (revokeApiToken).
+  function toggleCmPaused() {
+    setCmPaused((p) => {
+      const next = !p;
+      localStorage.setItem('pf-cardmirror-paused', next ? '1' : '0');
+      return next;
+    });
   }
 
   // ── Live observers: meta/sheets (structural) + active-sheet cells (text) ─────
@@ -2800,31 +2817,41 @@ export default function FlowView() {
         )}
 
         {/* CardMirror connection status — sits next to the flow name since it's
-            about this browser's identity, not this specific flow. */}
-        {cloudConfigured && cmBarConnected !== null && (
-          <Tooltip text={cmBarConnected ? 'CardMirror connected — click to disconnect' : 'CardMirror not connected'}>
-            <button
-              className="flex items-center gap-1.5 ml-2 shrink-0 transition-opacity"
-              style={{
-                fontSize: 11,
-                color: cmBarConnected ? 'var(--nav-active-color)' : 'var(--ink-muted)',
-                opacity: cmBarBusy ? 0.5 : 1,
-                cursor: cmBarConnected ? 'pointer' : 'default',
-                background: 'none',
-                border: 'none',
-                padding: 0,
-              }}
-              disabled={cmBarBusy || !cmBarConnected}
-              onClick={cmBarConnected ? handleCmBarDisconnect : undefined}
-            >
-              <span style={{
-                width: 5, height: 5, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
-                background: cmBarConnected ? '#22c55e' : 'var(--border-med)',
-              }} />
-              CardMirror: {cmBarConnected ? 'Connected' : 'Off'}
-            </button>
-          </Tooltip>
-        )}
+            about this browser's identity, not this specific flow. A click here
+            only pauses/resumes delivery locally (instant, reversible, no RPC) —
+            it never revokes the token. Real unpairing is Settings' Disconnect. */}
+        {cloudConfigured && cmTokenValid !== null && (() => {
+          const label = !cmTokenValid ? 'Not connected' : cmPaused ? 'Off' : 'Connected';
+          const on = cmTokenValid && !cmPaused;
+          const tooltip = !cmTokenValid
+            ? 'CardMirror not connected — pair it in Settings'
+            : cmPaused
+              ? 'Paused — click to resume'
+              : 'Connected — click to pause';
+          return (
+            <Tooltip text={tooltip}>
+              <button
+                className="flex items-center gap-1.5 ml-2 shrink-0 transition-opacity"
+                style={{
+                  fontSize: 11,
+                  color: on ? 'var(--nav-active-color)' : 'var(--ink-muted)',
+                  cursor: cmTokenValid ? 'pointer' : 'default',
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                }}
+                disabled={!cmTokenValid}
+                onClick={cmTokenValid ? toggleCmPaused : undefined}
+              >
+                <span style={{
+                  width: 5, height: 5, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
+                  background: on ? '#22c55e' : 'var(--border-med)',
+                }} />
+                CardMirror: {label}
+              </button>
+            </Tooltip>
+          );
+        })()}
 
         <div className="flex-1" />
 
