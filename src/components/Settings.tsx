@@ -26,12 +26,13 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [showKey, setShowKey] = useState(false);
   // CardMirror pairing
-  const [cmToken, setCmToken] = useState('');          // raw token shown once after generation
-  const [cmConnected, setCmConnected] = useState<boolean | null>(null); // null = loading
+  const [cmToken, setCmToken] = useState('');
+  const [cmConnected, setCmConnected] = useState(false);
   const [cmBusy, setCmBusy] = useState(false);
+  const [cmError, setCmError] = useState('');
   useEffect(() => {
     if (!cloudConfigured) return;
-    hasApiToken().then((r) => setCmConnected(r.ok ? r.data : false));
+    hasApiToken().then((r) => { if (r.ok) setCmConnected(r.data); });
   }, []);
   // Flow defaults live in their own store (lib/flowPrefs) because FlowView and
   // Home read them directly. Nothing in this app wrote them until now, which
@@ -123,9 +124,10 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                   className="btn h-8 px-3"
                   disabled={cmBusy}
                   onClick={async () => {
-                    setCmBusy(true);
+                    setCmBusy(true); setCmError('');
                     const res = await revokeApiToken();
                     if (res.ok) { setCmConnected(false); setCmToken(''); }
+                    else setCmError(res.error);
                     setCmBusy(false);
                   }}
                 >Disconnect</button>
@@ -133,15 +135,17 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             ) : (
               <button
                 className="btn h-8 px-3 self-start"
-                disabled={cmBusy || cmConnected === null}
+                disabled={cmBusy}
                 onClick={async () => {
-                  setCmBusy(true);
+                  setCmBusy(true); setCmError('');
                   const res = await createApiToken();
                   if (res.ok) { setCmToken(res.data); setCmConnected(true); }
+                  else setCmError(res.error);
                   setCmBusy(false);
                 }}
-              >{cmConnected === null ? 'Checking…' : 'Generate pairing code'}</button>
+              >Generate pairing code</button>
             )}
+            {cmError && <p className="text-sm" style={{ color: 'var(--danger)' }}>{cmError}</p>}
           </Section>
         )}
 
