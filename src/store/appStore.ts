@@ -19,8 +19,14 @@ export interface FlowMeta {
   shared?: boolean;
   /** The secret in this flow's share link. Owner-only; never for a shared flow. */
   shareToken?: string;
-  /** ISO timestamp set at creation — drives the grid's "newest first" order. */
+  /** ISO timestamp set at creation. */
   createdAt?: string;
+  /** ISO timestamp of the last edit — bumped by FlowView's persist(). Drives
+   * the home screen's default "last modified" sort. */
+  updatedAt?: string;
+  /** ISO timestamp of the last time this flow was opened. Drives the "last
+   * viewed" sort option; unset for a flow that's never been opened. */
+  viewedAt?: string;
   /** A short scratch note shown on the flow's card — opponent, round, judge,
    * whatever you'd otherwise forget between rounds. Lives on the card only. */
   notes?: string;

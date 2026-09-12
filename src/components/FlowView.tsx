@@ -401,6 +401,11 @@ export default function FlowView() {
   const [colMenu, setColMenu] = useState<number | null>(null);
   // Right-click menu on a sheet tab: which tab, and where to draw it.
   const [tabMenu, setTabMenu] = useState<{ idx: number; x: number; y: number } | null>(null);
+  // All-tabs list (hamburger button, left of "+"): open state + where its
+  // button sits, captured at open time so the panel can anchor beside it.
+  const [tabListOpen, setTabListOpen] = useState(false);
+  const [tabListAnchor, setTabListAnchor] = useState<{ left: number; bottom: number } | null>(null);
+  const tabListBtnRef = useRef<HTMLButtonElement | null>(null);
   const [hoveredCell, setHoveredCell] = useState<{ ri: number; ci: number } | null>(null);
   const [hoveredGap, setHoveredGap] = useState<{ ri: number; ci: number } | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -642,6 +647,17 @@ export default function FlowView() {
     return () => { if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; } };
   }, [flowId, reloadNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Mark this flow as viewed — once per actual switch onto it, not on every
+  // internal reload (reloadNonce), so a live-collab reload doesn't look like
+  // a fresh "view" for the home screen's "last viewed" sort.
+  useEffect(() => {
+    if (!flowId) return;
+    const now = new Date().toISOString();
+    const next = flowsIndex.map((f) => (f.id === flowId ? { ...f, viewedAt: now } : f));
+    setFlowsIndex(next);
+    void writeKey('flows_index', next);
+  }, [flowId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Live reload when Warroom AI (or another writer) edits this flow ─────────
   //
   // TWO channels, because they are two different events with two different costs:
@@ -822,6 +838,12 @@ export default function FlowView() {
     // keystroke, so we deliberately don't push cells here (would clobber merges).
     if (liveRef.current && !applyingRemote.current) syncStructureToDoc(payload);
     pushCloudSnapshot(payload);
+    // Drives the home screen's default "last modified" sort. Cheap enough to
+    // do on every persist — flowsIndex is a small list, not the flow's data.
+    const now = new Date().toISOString();
+    const nextIndex = flowsIndex.map((f) => (f.id === flowId ? { ...f, updatedAt: now } : f));
+    setFlowsIndex(nextIndex);
+    void writeKey('flows_index', nextIndex);
   }
 
   // Persist purely switching tabs too (not just content edits) — otherwise
@@ -3412,6 +3434,40 @@ export default function FlowView() {
         </>
       )}
 
+      {/* All-tabs list. `top` and `bottom` are both set, so the browser caps
+          the panel's height to whatever's left between the top toolbar and
+          this button — it only becomes internally scrollable once the tab
+          count actually exceeds that space, never before. */}
+      {tabListOpen && tabListAnchor && (
+        <>
+          <div className="fixed inset-0 z-40" onMouseDown={() => setTabListOpen(false)} />
+          <div
+            className="fixed z-50 py-1 rounded-lg shadow-xl text-xs overflow-y-auto"
+            style={{
+              left: Math.min(tabListAnchor.left, window.innerWidth - 220),
+              bottom: tabListAnchor.bottom,
+              top: 46,
+              minWidth: 200, maxWidth: 260,
+              background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)',
+            }}
+          >
+            {sheets.map((sheet, idx) => (
+              <DropBtn
+                key={sheet.id}
+                onClick={() => { setTabListOpen(false); switchSheet(idx); }}
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <span style={{ width: 12, flexShrink: 0, color: 'var(--nav-active-color)' }}>
+                    {idx === activeSheetIdx ? '✓' : ''}
+                  </span>
+                  <span className="truncate flex-1 min-w-0">{sheet.name}</span>
+                </span>
+              </DropBtn>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Ghost following the cursor while a group of cells is being dragged.
           Pointer-events off so the hit-test underneath still finds cells/tabs. */}
       {dragging && dragPos && drag.current && (
@@ -3507,6 +3563,30 @@ export default function FlowView() {
             />
           ))}
         </div>
+
+        {/* All tabs — RIGHT side, left of Add. Horizontal scroll through the
+            strip works for a handful of tabs, but not for finding one out of
+            twenty without scrubbing past everything in between. */}
+        <div className="w-px h-4 shrink-0" style={{ background: 'var(--border-subtle)' }} />
+        <Tooltip text="All tabs">
+          <button
+            ref={tabListBtnRef}
+            className="flex items-center justify-center w-8 h-8 shrink-0 transition"
+            style={{ color: 'var(--label-color)' }}
+            onClick={() => {
+              const el = tabListBtnRef.current;
+              if (el) {
+                const r = el.getBoundingClientRect();
+                setTabListAnchor({ left: r.left, bottom: window.innerHeight - r.top + 6 });
+              }
+              setTabListOpen((o) => !o);
+            }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--nav-active-color)')}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'var(--label-color)')}
+          >
+            <IcoHamburger />
+          </button>
+        </Tooltip>
 
         {/* Add sheet — RIGHT side */}
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border-subtle)' }} />
@@ -3620,6 +3700,15 @@ function IcoRedo() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9.5 4.5H5.5a3 3 0 0 0 0 6H10" />
       <path d="M9.5 2.5l2 2-2 2" />
+    </svg>
+  );
+}
+function IcoHamburger() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="4" y1="7" x2="20" y2="7" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="17" x2="20" y2="17" />
     </svg>
   );
 }
