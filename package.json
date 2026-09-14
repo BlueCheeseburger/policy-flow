@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "description": "A flowing app for competitive policy debate — grid, arrows, Auto Flow, and live co-flowing.",
   "scripts": {
     "dev": "vite",

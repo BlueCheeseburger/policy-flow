@@ -114,3 +114,7 @@ ported from [Warroom](https://github.com/BlueCheeseburger/warroom), along with
 their tests, which is most of the reason the port can be trusted. Warroom's
 team features — shared team files, Google Sheets export, team-scoped flows —
 are not here and are not planned. `.xlsx` is the bridge between the two.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
