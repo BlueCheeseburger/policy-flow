@@ -279,8 +279,9 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search flows by title…"
-                className="input text-xs w-full h-8 pl-8 pr-2.5"
+                placeholder="Search…"
+                className="input text-xs w-full h-8 pr-2.5"
+                style={{ paddingLeft: 30 }}
               />
             </div>
           </div>
