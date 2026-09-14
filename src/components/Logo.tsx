@@ -11,8 +11,9 @@ import React, { useId } from 'react';
  *
  * Warroom's app icon wraps those stripes in a neon bloom and a grain filter.
  * Both are omitted here on purpose: at 18px in a top bar a Gaussian bloom
- * smears the three stripes into one lilac blob. `public/favicon.svg` keeps the
- * squircle for the tab strip, where the mark is a badge rather than a wordmark.
+ * smears the three stripes into one lilac blob. `public/favicon.svg` is the
+ * same bare stripes on a square (not this SVG's 272x168) viewBox — no
+ * squircle, no bloom, just re-centred for the square favicon slot.
  */
 export default function Logo({ size = 18 }: { size?: number }) {
   // The gradient id has to be unique per instance: two inline SVGs sharing one
