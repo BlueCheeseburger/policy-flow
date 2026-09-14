@@ -3,14 +3,27 @@
 A flowing app for competitive policy debate. Open the page and start flowing —
 no account, no sign-up, nothing to install.
 
-- **Flow.** A seven-column policy grid (1AC → 2AR), tabs per position, arrows
-  between cells, multi-cell selection, find, undo, zoom, keyboard shortcuts.
-- **Auto Flow.** Drop a `.docx` speech doc and it reads the tag/cite hierarchy
-  and lays the cards out. The parser needs no API key at all; adding one lets a
-  model sort cards into the right tab and column and write short summaries.
-- **Share.** Turn a flow into a room and hand out the link. Everyone who opens
-  it edits the same flow live, with colored cursors.
-- **`.xlsx` in and out.** How a flow moves between this and anything else.
+## The five biggest things it does
+
+1. **Flow, with real-time co-flowing.** A seven-column policy grid (1AC → 2AR)
+   with tabs per position, arrows between cells, multi-cell selection, find,
+   undo, zoom, and keyboard shortcuts — and unlike a shared Google Sheet, a
+   flow can be turned into a live room: everyone who opens the link edits the
+   same flow at once with colored cursors, no account or sign-up for anyone.
+2. **Auto Flow.** Drop a Verbatim-format `.docx` speech doc and it parses the
+   tag/cite hierarchy straight into flow tabs and columns for free, no API key
+   needed; adding one lets a model sort cards into the right tab/column and
+   write short summaries instead.
+3. **CardMirror integration.** A paired companion card-cutting session can
+   push a cut card straight into the right cell of your open flow the moment
+   it's cut — no alt-tabbing to copy-paste a card mid-round.
+4. **Local-first, no account required, ever.** Flows are saved to this
+   browser and work fully offline; a one-time transfer code moves them to a
+   new device or browser without creating an account anywhere.
+5. **`.xlsx` in and out.** Import an existing spreadsheet flow or export this
+   one, so it's never a dead end for a team still living in Sheets.
+
+See [changelog.md](changelog.md) for what's changed in this fork over time.
 
 ## Running it
 
