@@ -9,6 +9,7 @@ type AIProvider = Provider;
 
 const PROVIDER_INFO: Record<AIProvider, { name: string; quotaHost: string }> = {
   gemini:   { name: 'Gemini',    quotaHost: 'aistudio.google.com' },
+  openai:   { name: 'OpenAI',    quotaHost: 'platform.openai.com/usage' },
   lmstudio: { name: 'LM Studio', quotaHost: 'lmstudio.ai' },
 };
 
@@ -47,7 +48,7 @@ export function humanizeGeminiError(raw: string | undefined | null, provider?: A
   if (msg.includes('resource_exhausted') || msg.includes('quota') || msg.includes('429') || msg.includes('rate limit'))
     return `You've hit your ${info.name} usage limit. Wait a minute, then try again — or check your quota at ${info.quotaHost}.`;
 
-  if (msg.includes('api_key_invalid') || msg.includes('invalid api key') || msg.includes('api key not valid'))
+  if (msg.includes('api_key_invalid') || msg.includes('invalid_api_key') || msg.includes('invalid api key') || msg.includes('api key not valid') || msg.includes('incorrect api key'))
     return `Your ${info.name} API key isn't working. Double-check it in Settings → AI.`;
 
   // Gemini's "400 FAILED_PRECONDITION: User location is not supported for the

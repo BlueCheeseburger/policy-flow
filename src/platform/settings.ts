@@ -7,13 +7,15 @@
 // laptop — can read it. Settings says so out loud rather than implying the
 // key is protected. It is deliberately NOT included in the settings export.
 
-export type Provider = 'gemini' | 'lmstudio';
+export type Provider = 'gemini' | 'openai' | 'lmstudio';
 export type LongInputMethod = 'sample' | 'passes';
 
 export interface Settings {
   provider: Provider;
   geminiKey: string;
   geminiModel: string;
+  openaiKey: string;
+  openaiModel: string;
   lmStudioUrl: string;
   lmStudioModel: string;
   /** Extra guidance appended to the Auto Flow sorting prompt. */
@@ -30,6 +32,8 @@ export const DEFAULT_SETTINGS: Settings = {
   provider: 'gemini',
   geminiKey: '',
   geminiModel: 'gemini-flash-latest',
+  openaiKey: '',
+  openaiModel: 'gpt-4o-mini',
   lmStudioUrl: 'http://localhost:1234',
   lmStudioModel: '',
   autoFlowInstructions: '',
@@ -45,7 +49,7 @@ const KEY = 'policyflow-settings';
 export const SETTINGS_CHANGED_EVENT = 'policyflow-settings-changed';
 
 // Fields that must never leave the app in an export or a share link.
-const SECRET_FIELDS: (keyof Settings)[] = ['geminiKey'];
+const SECRET_FIELDS: (keyof Settings)[] = ['geminiKey', 'openaiKey'];
 
 let cache: Settings | null = null;
 
@@ -59,7 +63,7 @@ export function readSettings(): Settings {
   cache = {
     ...DEFAULT_SETTINGS,
     ...stored,
-    provider: stored.provider === 'lmstudio' ? 'lmstudio' : 'gemini',
+    provider: stored.provider === 'lmstudio' || stored.provider === 'openai' ? stored.provider : 'gemini',
     longInputMethod: stored.longInputMethod === 'passes' ? 'passes' : 'sample',
     theme: stored.theme === 'light' || stored.theme === 'dark' ? stored.theme : 'system',
     autoFlowInstructions: String(stored.autoFlowInstructions ?? '').slice(0, 300),
@@ -84,5 +88,7 @@ export function exportableSettings(): Partial<Settings> {
 
 /** True when the configured provider has enough to make a call. */
 export function aiConfigured(s: Settings = readSettings()): boolean {
-  return s.provider === 'gemini' ? !!s.geminiKey.trim() : !!s.lmStudioUrl.trim();
+  if (s.provider === 'lmstudio') return !!s.lmStudioUrl.trim();
+  if (s.provider === 'openai') return !!s.openaiKey.trim();
+  return !!s.geminiKey.trim();
 }

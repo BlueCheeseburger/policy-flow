@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../store/appStore';
 import { listLmStudioModels, promptNames, promptSource } from '../platform/ai';
-import { aiConfigured } from '../platform/settings';
+import { aiConfigured, type Provider } from '../platform/settings';
 import { readFlowPrefs, writeFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
 import { createTransferCode, claimTransferCode, createApiToken, revokeApiToken, hasApiToken } from '../platform/cloud';
 import { cloudConfigured } from '../platform/supabase';
@@ -12,6 +12,12 @@ import {
   findConflict, formatBinding, bindingFromEvent, isBindingValid, isShortcutDisabled,
   toggleShortcutDisabled, type KeyBinding,
 } from '../lib/shortcutPrefs';
+
+const PROVIDER_LABEL: Record<Provider, string> = {
+  gemini: 'Gemini',
+  openai: 'OpenAI',
+  lmstudio: 'LM Studio',
+};
 
 export default function Settings({ onClose }: { onClose: () => void }) {
   const { settings, updateSettings, setFlowsIndex } = useApp();
@@ -157,7 +163,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         <Section
           title="AI"
           intro={aiConfigured(settings)
-            ? `${settings.provider === 'gemini' ? 'Gemini' : 'LM Studio'} · connected`
+            ? `${PROVIDER_LABEL[settings.provider]} · connected`
             : 'No key set — Auto Flow still reads docs'}
         >
 
@@ -165,7 +171,11 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             <Segmented
               value={settings.provider}
               onChange={(v) => updateSettings({ provider: v as any })}
-              options={[{ value: 'gemini', label: 'Gemini' }, { value: 'lmstudio', label: 'LM Studio' }]}
+              options={[
+                { value: 'gemini', label: 'Gemini' },
+                { value: 'openai', label: 'OpenAI' },
+                { value: 'lmstudio', label: 'LM Studio' },
+              ]}
             />
           </Row>
 
@@ -203,6 +213,44 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                   value={settings.geminiModel}
                   spellCheck={false}
                   onChange={(e) => updateSettings({ geminiModel: e.target.value })}
+                />
+              </Row>
+            </>
+          ) : settings.provider === 'openai' ? (
+            <>
+              <Row label="API key">
+                <div className="flex-1 flex gap-2">
+                  <input
+                    className="input flex-1 font-mono text-xs"
+                    type={showKey ? 'text' : 'password'}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="sk-…"
+                    value={settings.openaiKey}
+                    onChange={(e) => updateSettings({ openaiKey: e.target.value })}
+                  />
+                  <button className="btn px-2.5 shrink-0" onClick={() => setShowKey((v) => !v)}>
+                    {showKey ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </Row>
+              <div className="callout">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0 mt-px" aria-hidden="true">
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                <span>
+                  Stored in this browser, unencrypted — anyone who can open devtools on this
+                  machine can read it. Think twice on a shared or school laptop. It is never
+                  included in an export, and only ever sent to OpenAI.
+                </span>
+              </div>
+              <Row label="Model">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  placeholder="gpt-4o-mini"
+                  value={settings.openaiModel}
+                  spellCheck={false}
+                  onChange={(e) => updateSettings({ openaiModel: e.target.value })}
                 />
               </Row>
             </>

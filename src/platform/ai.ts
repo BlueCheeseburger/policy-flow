@@ -5,6 +5,8 @@
 //
 //   • Gemini — sends CORS headers on generativelanguage.googleapis.com, so a
 //     direct browser call works with no proxy.
+//   • OpenAI — api.openai.com also sends CORS headers for the chat completions
+//     endpoint, so this is a direct browser call too, same as Gemini.
 //   • LM Studio — the user's own machine. The page is HTTPS and LM Studio is
 //     http://localhost, which Chrome/Edge/Firefox permit because localhost
 //     counts as a trustworthy origin; Safari blocks it. LM Studio's own CORS
@@ -100,6 +102,46 @@ async function callGemini(s: Settings, prompt: string, tier: ModelTier, maxOutpu
   return text;
 }
 
+// ── OpenAI ───────────────────────────────────────────────────────────────────
+function openaiHttpError(status: number, body: string): Error {
+  let parsed: any;
+  try { parsed = JSON.parse(body)?.error; } catch { /* not JSON */ }
+  if (parsed?.message) {
+    return new Error(`OpenAI [${status}${parsed.code ? ' ' + parsed.code : ''}]: ${parsed.message}`);
+  }
+  if (status === 429) return new Error('Rate limit reached — wait a moment and try again.');
+  if (status === 503) return new Error('The model is overloaded right now. Try again in a few seconds.');
+  if (status === 401 || status === 403) return new Error(`The request was rejected (HTTP ${status}) — check your API key in Settings.`);
+  return new Error(`The request failed (HTTP ${status}) — try again shortly.`);
+}
+
+async function callOpenAI(s: Settings, prompt: string, maxOutputTokens: number): Promise<string> {
+  const key = s.openaiKey.trim();
+  if (!key) throw new NoKeyError('No API key set. Add one in Settings to use anything that calls a model.');
+  const model = s.openaiModel.trim() || 'gpt-4o-mini';
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      // Newer models (o-series, gpt-5) reject the older `max_tokens` field —
+      // this is the name every current chat model accepts.
+      max_completion_tokens: maxOutputTokens,
+    }),
+  }).catch((e) => {
+    throw new Error(`Could not reach the model (${e?.message || 'network error'}). Check your connection — a VPN or content blocker can also break this request.`);
+  });
+  if (!res.ok) throw openaiHttpError(res.status, await res.text().catch(() => ''));
+  const data: any = await res.json();
+  const choice = data?.choices?.[0];
+  const text = choice?.message?.content ?? '';
+  if (choice?.finish_reason === 'length') throw truncatedResponseError('OpenAI', text);
+  if (typeof text !== 'string' || !text) throw new Error('OpenAI returned an empty response.');
+  return text;
+}
+
 // ── LM Studio (OpenAI-compatible, on the user's own machine) ─────────────────
 async function callLmStudio(s: Settings, prompt: string, maxOutputTokens: number): Promise<string> {
   const base = s.lmStudioUrl.trim().replace(/\/+$/, '');
@@ -145,9 +187,9 @@ export async function callAI(
 ): Promise<string> {
   const s = readSettings();
   const maxOutputTokens = extra?.maxOutputTokens ?? 8192;
-  return s.provider === 'lmstudio'
-    ? callLmStudio(s, prompt, maxOutputTokens)
-    : callGemini(s, prompt, tier, maxOutputTokens);
+  if (s.provider === 'lmstudio') return callLmStudio(s, prompt, maxOutputTokens);
+  if (s.provider === 'openai') return callOpenAI(s, prompt, maxOutputTokens);
+  return callGemini(s, prompt, tier, maxOutputTokens);
 }
 
 // ── Prompt rendering ─────────────────────────────────────────────────────────
