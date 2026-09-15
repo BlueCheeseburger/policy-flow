@@ -212,11 +212,44 @@ const PROMPTS: Record<string, string> = {
   flow_import: flowImport,
 };
 
+// A user edit is kept in localStorage, keyed by prompt name, and shadows the
+// bundled .txt file — the bundle is read-only (it's compiled into the JS), so
+// an edit has nowhere else to live. Absent = using the shipped default.
+const PROMPT_OVERRIDE_PREFIX = 'policyflow-prompt-override:';
+
 export function promptNames(): string[] { return Object.keys(PROMPTS); }
-export function promptSource(name: string): string { return PROMPTS[name] ?? ''; }
+
+/** The shipped, un-edited prompt text — what "Reset to default" restores. */
+export function promptDefaultSource(name: string): string { return PROMPTS[name] ?? ''; }
+
+function getPromptOverride(name: string): string | null {
+  try { return localStorage.getItem(PROMPT_OVERRIDE_PREFIX + name); } catch { return null; }
+}
+
+/** The text actually in effect right now — a saved edit if there is one, else the default. */
+export function promptSource(name: string): string {
+  return getPromptOverride(name) ?? promptDefaultSource(name);
+}
+
+export function promptIsCustomized(name: string): boolean {
+  return getPromptOverride(name) !== null;
+}
+
+export function setPromptOverride(name: string, source: string): void {
+  try {
+    // Saving back exactly the default text is the same thing as resetting —
+    // don't leave a no-op override sitting around forever.
+    if (source === promptDefaultSource(name)) localStorage.removeItem(PROMPT_OVERRIDE_PREFIX + name);
+    else localStorage.setItem(PROMPT_OVERRIDE_PREFIX + name, source);
+  } catch { /* quota or private mode — the in-memory default still works */ }
+}
+
+export function resetPromptOverride(name: string): void {
+  try { localStorage.removeItem(PROMPT_OVERRIDE_PREFIX + name); } catch { /* ignore */ }
+}
 
 export function renderPrompt(name: string, vars: Record<string, string>): string {
-  const src = PROMPTS[name];
-  if (!src) throw new Error(`Unknown prompt "${name}".`);
+  if (!(name in PROMPTS)) throw new Error(`Unknown prompt "${name}".`);
+  const src = promptSource(name);
   return src.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_m, k) => vars[k] ?? '');
 }

@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../store/appStore';
-import { listLmStudioModels, promptNames, promptSource } from '../platform/ai';
+import {
+  listLmStudioModels, promptNames, promptSource, promptIsCustomized,
+  setPromptOverride, resetPromptOverride,
+} from '../platform/ai';
 import { aiConfigured, type Provider } from '../platform/settings';
 import { readFlowPrefs, writeFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
 import { createTransferCode, claimTransferCode, createApiToken, revokeApiToken, hasApiToken } from '../platform/cloud';
@@ -29,6 +32,11 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [claimInput, setClaimInput] = useState('');
   const [transferMsg, setTransferMsg] = useState('');
   const [showPrompt, setShowPrompt] = useState<string | null>(null);
+  const [promptDraft, setPromptDraft] = useState('');
+  // Bumped after a save/reset to force the "is this customized / dirty"
+  // comparisons below to re-read localStorage — they aren't otherwise
+  // reactive to a write that doesn't go through React state.
+  const [promptNonce, setPromptNonce] = useState(0);
   const [moreOpen, setMoreOpen] = useState(false);
   const [showKey, setShowKey] = useState(false);
   // CardMirror pairing
@@ -350,27 +358,69 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             <p className="text-sm">Exactly what gets sent to the model, for every AI feature here.</p>
 
           <div className="flex flex-col">
-            {promptNames().map((n, i) => (
+            {promptNames().map((n, i) => {
+              const customized = promptIsCustomized(n);
+              const dirty = showPrompt === n && promptDraft !== promptSource(n);
+              return (
               <div key={n} className={i > 0 ? 'divider' : ''}>
                 <button
                   className="btn-icon w-full flex items-center justify-between gap-3 py-2.5 text-left"
-                  onClick={() => setShowPrompt(showPrompt === n ? null : n)}
+                  onClick={() => {
+                    if (showPrompt === n) { setShowPrompt(null); return; }
+                    setShowPrompt(n);
+                    setPromptDraft(promptSource(n));
+                  }}
                 >
-                  <span className="font-mono text-xs">{n}</span>
+                  <span className="font-mono text-xs flex items-center gap-2">
+                    {n}
+                    {customized && (
+                      <span className="text-[9px] font-sans font-semibold uppercase tracking-wide" style={{ color: 'var(--accent)' }}>
+                        Edited
+                      </span>
+                    )}
+                  </span>
                   <span className="text-xs shrink-0" style={{ color: 'var(--label-color)' }}>
-                    {showPrompt === n ? 'Hide' : 'View'}
+                    {showPrompt === n ? 'Hide' : 'Edit'}
                   </span>
                 </button>
                 {showPrompt === n && (
-                  <pre
-                    className="text-[11px] leading-relaxed p-3 mb-2.5 rounded-[9px] overflow-auto max-h-72 whitespace-pre-wrap font-mono"
-                    style={{ background: 'var(--bg-nest)' }}
-                  >
-                    {promptSource(n)}
-                  </pre>
+                  <div className="mb-2.5">
+                    <textarea
+                      className="input w-full text-[11px] leading-relaxed p-3 rounded-[9px] font-mono resize-y"
+                      style={{ background: 'var(--bg-nest)', minHeight: 220 }}
+                      spellCheck={false}
+                      value={promptDraft}
+                      onChange={(e) => setPromptDraft(e.target.value)}
+                    />
+                    <div className="flex items-center gap-2 mt-2">
+                      <button
+                        className="btn-primary px-3 py-1 text-xs"
+                        disabled={!dirty}
+                        onClick={() => {
+                          setPromptOverride(n, promptDraft);
+                          setPromptNonce((x) => x + 1);
+                        }}
+                      >
+                        Save
+                      </button>
+                      {customized && (
+                        <button
+                          className="btn px-3 py-1 text-xs"
+                          onClick={() => {
+                            resetPromptOverride(n);
+                            setPromptDraft(promptSource(n));
+                            setPromptNonce((x) => x + 1);
+                          }}
+                        >
+                          Reset to default
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
           </div>
         </Section>
