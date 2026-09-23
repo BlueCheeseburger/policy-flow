@@ -22,9 +22,11 @@ right-click jumping.
 
 1. In CardMirror, open Settings → Plugins, turn on **Enable plugins**, and
    relaunch.
-2. Install the plugin. Once `BlueCheeseburger/policy-flow` is on CardMirror's
-   plugin allowlist, paste it into the Plugins tab. Until then, download
-   `plugin.js` from the [latest release](https://github.com/BlueCheeseburger/policy-flow/releases/latest)
+2. Install the plugin. On the CardMirror fork (1.12.0-bcb.2 or newer), paste
+   `BlueCheeseburger/policy-flow` into the Plugins tab. It's on the fork's
+   allowlist. Upstream CardMirror and older builds don't allow installing it
+   by name, so download `plugin.js` from the
+   [latest release](https://github.com/BlueCheeseburger/policy-flow/releases/latest)
    and use **Load plugin from file…**.
 3. In Policy Flow, open Settings → CardMirror → **Generate pairing code**.
 4. In CardMirror's Plugins tab, click the gear on Policy Flow's row and paste
