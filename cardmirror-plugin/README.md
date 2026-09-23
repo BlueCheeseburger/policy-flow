@@ -29,8 +29,10 @@ right-click jumping.
    [latest release](https://github.com/BlueCheeseburger/policy-flow/releases/latest)
    and use **Load plugin from file…**.
 3. In Policy Flow, open Settings → CardMirror → **Generate pairing code**.
-4. In CardMirror's Plugins tab, click the gear on Policy Flow's row and paste
-   the code into **Pairing code**.
+4. In CardMirror, run **Policy Flow: Settings and pairing code** from the
+   command palette (or just press `~`, which opens it when no code is set)
+   and paste the code in. On builds where the plugin has a row in Settings →
+   Plugins, its gear works too.
 
 ## How it connects
 

@@ -3,6 +3,16 @@
 What's changed in this fork, newest first. Grouped by day, not by version —
 this is a running app with no release cuts.
 
+## 2026-09-23
+
+- CardMirror plugin 0.1.1: a **Policy Flow: Settings and pairing code**
+  command opens the plugin's own settings window, with the pairing code, the
+  titles toggle, and "What it does" / "Setting it up" / "Good to know"
+  sections taken straight from this README. CardMirror only shows a settings
+  gear for plugins in its installed list, so a plugin loaded from a file had
+  nowhere to enter a code. Pressing `~` with no code set opens the window too.
+- README: a "Using the CardMirror plugin" section.
+
 ## 2026-09-22
 
 - CardMirror is now a plugin: the built-in integration was removed from

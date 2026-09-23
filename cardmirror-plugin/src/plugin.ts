@@ -16,6 +16,7 @@ import {
   chunkCards, cmTopic, isCmSource, itemsToCards, sha256Hex,
   type CmCardsAck, type CmJumpAck, type ExtractedItemLike,
 } from '../../src/lib/cardMirrorLink';
+import { openSettingsWindow } from './settingsWindow';
 
 // Injected at build time from the web app's own .env — the same public,
 // RLS-protected anon key the site ships to every browser.
@@ -45,17 +46,30 @@ interface Api {
 
 let api: Api | null = null;
 
+// The pairing code can be entered two ways: CardMirror's gear (the declared
+// `token` setting) or this plugin's own settings window, which saves to
+// storage as `pairingCode`. Whichever was set last wins — editing the gear
+// clears the window's copy (see activate), so they never disagree for long.
+function readBag(): Record<string, any> {
+  try { return JSON.parse(localStorage.getItem(`plugin:${PLUGIN_ID}`) || '{}') ?? {}; } catch { return {}; }
+}
+
 function pairingToken(): string {
-  const fromApi = api?.settings.get('token');
-  if (typeof fromApi === 'string') return fromApi.trim();
+  const fromWindow = api ? api.storage.get('pairingCode') : readBag().pairingCode;
+  if (typeof fromWindow === 'string' && fromWindow.trim()) return fromWindow.trim();
+  const fromGear = api?.settings.get('token');
+  if (typeof fromGear === 'string') return fromGear.trim();
   // Before CardMirror hands us an api (builds without activate(), until the
   // first command runs), read the declared setting straight from the plugin's
   // storage bag so jump requests can still be heard and answered "not ready".
-  try {
-    const bag = JSON.parse(localStorage.getItem(`plugin:${PLUGIN_ID}`) || '{}');
-    const t = bag?.__settings?.token;
-    return typeof t === 'string' ? t.trim() : '';
-  } catch { return ''; }
+  const t = readBag()?.__settings?.token;
+  return typeof t === 'string' ? t.trim() : '';
+}
+
+function includeHeadings(): boolean {
+  const fromWindow = api?.storage.get('includeHeadings');
+  if (typeof fromWindow === 'boolean') return fromWindow;
+  return api?.settings.get('includeHeadings') !== false;
 }
 
 function isPaused(): boolean {
@@ -185,7 +199,8 @@ async function sendToFlow(a: Api) {
   if (isPaused()) { a.showToast('Sending to Policy Flow is paused. Run “Policy Flow: Resume sending” to turn it back on.'); return; }
   const token = pairingToken();
   if (!token) {
-    a.showToast('Add your pairing code first: Settings → Plugins → Policy Flow (gear). Get one in Policy Flow → Settings → CardMirror.');
+    a.showToast('Add your pairing code first. Get one in Policy Flow → Settings → CardMirror.');
+    openSettings(a);
     return;
   }
   const ext = a.extractSelection();
@@ -197,7 +212,7 @@ async function sendToFlow(a: Api) {
     );
     return;
   }
-  const cards = itemsToCards(ext.items, { includeHeadings: a.settings.get('includeHeadings') !== false });
+  const cards = itemsToCards(ext.items, { includeHeadings: includeHeadings() });
   if (!cards.length) { a.showToast('No tags or analytics there to send.'); return; }
 
   const c = await joinedConn();
@@ -226,6 +241,20 @@ async function sendToFlow(a: Api) {
   a.showToast(placed === 1
     ? `Sent “${first.length > 48 ? first.slice(0, 47) + '…' : first}” to ${where}`
     : `Sent ${placed} rows to ${where}`);
+}
+
+function openSettings(a: Api) {
+  adoptApi(a);
+  openSettingsWindow({
+    code: pairingToken(),
+    includeHeadings: includeHeadings(),
+    onSave({ code, includeHeadings: heads }) {
+      a.storage.set('pairingCode', code);
+      a.storage.set('includeHeadings', heads);
+      void connect();
+      a.showToast(code ? 'Saved. Press ~ on a tag to send it to your flow.' : 'Pairing code removed.');
+    },
+  });
 }
 
 function togglePause(a: Api) {
@@ -263,7 +292,12 @@ void connect();
   // work before any command has run. Older builds ignore this field.
   activate(a: Api) {
     adoptApi(a);
-    const off = a.settings.onChanged?.((key) => { if (key === 'token') void connect(); });
+    const off = a.settings.onChanged?.((key) => {
+      // A change made in the gear is the newest word — drop the settings
+      // window's copy so the gear's value takes effect.
+      if (key === 'token') { a.storage.set('pairingCode', ''); void connect(); }
+      if (key === 'includeHeadings') a.storage.set('includeHeadings', undefined);
+    });
     return () => { off?.(); teardown(); };
   },
   commands: [
@@ -273,6 +307,13 @@ void connect();
       keywords: ['flow', 'send', 'tagline', 'policy', 'pf'],
       defaultKey: '~',
       run: sendToFlow,
+    },
+    {
+      id: `${PLUGIN_ID}.settings`,
+      label: 'Policy Flow: Settings and pairing code',
+      keywords: ['flow', 'pair', 'pairing', 'code', 'settings', 'setup', 'policy', 'help'],
+      defaultKey: null,
+      run: openSettings,
     },
     {
       id: `${PLUGIN_ID}.togglePause`,

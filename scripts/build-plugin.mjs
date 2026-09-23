@@ -36,6 +36,8 @@ await build({
   platform: 'browser',
   target: 'es2020',
   legalComments: 'inline',
+  // The settings window's help sections are read out of README.md.
+  loader: { '.md': 'text' },
   banner: { js: `// Policy Flow plugin for CardMirror v${manifest.version} — https://github.com/BlueCheeseburger/policy-flow` },
   define: {
     __PF_SUPABASE_URL__: JSON.stringify(url),

@@ -118,7 +118,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             <p className="text-xs leading-relaxed" style={{ color: 'var(--label-color)' }}>
               To set it up, install the plugin from{' '}
               <a href={CM_PLUGIN_RELEASES} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>its releases page</a>{' '}
-              (CardMirror desktop: Settings → Plugins, turn on Enable plugins, then relaunch). Generate a code below and paste it into the plugin's settings (the gear on its row).
+              (CardMirror desktop: Settings → Plugins, turn on Enable plugins, then relaunch). Generate a code below, then in CardMirror run “Policy Flow: Settings and pairing code” from the command palette and paste it in.
               The code is tied to this browser, so if you clear site data you'll need a new one.
             </p>
             {cmToken ? (

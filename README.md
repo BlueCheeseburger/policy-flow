@@ -59,8 +59,10 @@ copying and pasting.
    [latest release](https://github.com/BlueCheeseburger/policy-flow/releases/latest)
    and choose **Load plugin from file…**.
 3. Here in Policy Flow, open Settings → CardMirror → **Generate pairing code**.
-4. Back in CardMirror's Plugins tab, click the gear on the Policy Flow row
-   and paste the code into **Pairing code**.
+4. Back in CardMirror, open the command palette and run
+   **Policy Flow: Settings and pairing code**, then paste the code in. The
+   first `~` also opens it if no code is set. On builds where the plugin has
+   a row in Settings → Plugins, its gear works too.
 
 Once you're paired, the flow's toolbar shows **CardMirror: Connected**.
 Click it to pause sends, and click again to resume. The pairing code belongs
