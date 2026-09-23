@@ -17,6 +17,7 @@ import {
   type CmCardsAck, type CmJumpAck, type ExtractedItemLike,
 } from '../../src/lib/cardMirrorLink';
 import { openSettingsWindow } from './settingsWindow';
+import { helpPlainSections } from './readmeSections';
 
 // Injected at build time from the web app's own .env — the same public,
 // RLS-protected anon key the site ships to every browser.
@@ -287,6 +288,13 @@ void connect();
       default: true,
       description: 'When sending a whole section, its titles go in underlined between the cards.',
     },
+    // The README's help as collapsible sections under CardMirror's own gear.
+    // Only on builds that know the `info` type — they announce themselves
+    // with window.__cardmirrorAppVersion; older ones reject unknown setting
+    // types and would refuse the whole plugin.
+    ...(typeof (window as any).__cardmirrorAppVersion === 'string'
+      ? helpPlainSections().map((sec, i) => ({ key: `help${i}`, label: sec.title, type: 'info', default: '', body: sec.body }))
+      : []),
   ],
   // CardMirror 1.12.0-bcb.2+: hands us the api at load, so right-click jumps
   // work before any command has run. Older builds ignore this field.

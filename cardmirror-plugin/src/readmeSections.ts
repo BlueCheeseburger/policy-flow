@@ -51,7 +51,8 @@ function block(md: string): string {
   return out.join('');
 }
 
-export function helpSections(): HelpSection[] {
+/** The README's plugin subsections as raw markdown, by title. */
+function rawSections(): { title: string; md: string }[] {
   const text = String(README ?? '');
   const start = text.indexOf('## Using the CardMirror plugin');
   if (start < 0) return [];
@@ -60,7 +61,37 @@ export function helpSections(): HelpSection[] {
   const body = end < 0 ? rest : rest.slice(0, end);
   // Subsections are marked by a line that is only bold text: **Title**
   const parts = body.split(/\n\*\*([^*\n]+)\*\*\n/);
-  const sections: HelpSection[] = [];
-  for (let i = 1; i < parts.length; i += 2) sections.push({ title: parts[i], html: block(parts[i + 1] ?? '') });
-  return sections;
+  const out: { title: string; md: string }[] = [];
+  for (let i = 1; i < parts.length; i += 2) out.push({ title: parts[i], md: parts[i + 1] ?? '' });
+  return out;
+}
+
+export function helpSections(): HelpSection[] {
+  return rawSections().map((s) => ({ title: s.title, html: block(s.md) }));
+}
+
+/**
+ * The same sections as plain text for CardMirror's own `info` settings
+ * (rendered with textContent: blank line = paragraph, "- " = bullet,
+ * adjacent plain lines join). Markdown marks are stripped, links keep their
+ * text, and numbered steps become bullets that keep their numbers.
+ */
+export function helpPlainSections(): { title: string; body: string }[] {
+  const plain = (s: string) => s
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
+  return rawSections().map(({ title, md }) => {
+    const lines: string[] = [];
+    for (const raw of md.split('\n')) {
+      const line = raw.trimEnd();
+      const num = line.match(/^(\d+)\. (.*)$/);
+      if (num) lines.push(`- ${num[1]}. ${plain(num[2])}`);
+      else if (/^- /.test(line)) lines.push(`- ${plain(line.slice(2))}`);
+      else if (!line.trim()) lines.push('');
+      else if (/^\s+/.test(raw) && lines.length && lines[lines.length - 1].startsWith('- ')) lines[lines.length - 1] += ' ' + plain(line.trim());
+      else lines.push(plain(line.trim()));
+    }
+    return { title, body: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() };
+  }).filter((s) => s.body);
 }

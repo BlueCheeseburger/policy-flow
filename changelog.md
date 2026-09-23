@@ -12,6 +12,10 @@ this is a running app with no release cuts.
   gear for plugins in its installed list, so a plugin loaded from a file had
   nowhere to enter a code. Pressing `~` with no code set opens the window too.
 - README: a "Using the CardMirror plugin" section.
+- CardMirror plugin 0.1.2: on CardMirror builds that support it (1.12.0-bcb.2
+  and newer), the same README sections also appear as expandable sections
+  under the plugin's gear in Settings → Plugins. Plugins loaded from a file
+  get a gear there too.
 
 ## 2026-09-22
 
