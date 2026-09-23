@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "A flowing app for competitive policy debate — grid, arrows, Auto Flow, and live co-flowing.",
+  "description": "A flowing app for competitive policy debate \u2014 grid, arrows, Auto Flow, and live co-flowing.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/test-all.ts"
+    "test": "tsx scripts/test-all.ts",
+    "build:plugin": "node scripts/build-plugin.mjs"
   },
   "dependencies": {
     "@fontsource/hanken-grotesk": "^5.3.0",

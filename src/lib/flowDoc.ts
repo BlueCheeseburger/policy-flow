@@ -8,6 +8,7 @@
 //
 //   doc.getMap('meta')              event, variant, pfOrder, fontSize, zoom,
 //                                   customColumns, columnWidths, columnColors
+//   doc.getText('cx')               the cross-ex outline (lib/crossEx.ts)
 //   doc.getArray('sheets')          one Y.Map per sheet:
 //       { id, name, cells: Y.Map<cellKey, Y.Text>, arrows: Y.Array<arrow> }
 //
@@ -41,6 +42,8 @@ export interface FlowDocData {
   zoom: number;
   /** Optional: flows created before rows became growable carry no count. */
   numRows?: number;
+  /** The cross-ex outline (lib/crossEx.ts). Lives in its own Y.Text, `cx`. */
+  cx?: string;
 }
 
 export function metaMap(doc: Y.Doc): Y.Map<any> { return doc.getMap('meta'); }
@@ -110,6 +113,7 @@ export function seedDoc(doc: Y.Doc, data: FlowDocData, cellToHtml: (v: string) =
     meta.set('customColumns', data.customColumns);
     meta.set('columnWidths', data.columnWidths);
     meta.set('columnColors', data.columnColors);
+    if (data.cx) doc.getText('cx').insert(0, data.cx);
 
     const sheets = sheetsArr(doc);
     for (const sh of data.sheets) {

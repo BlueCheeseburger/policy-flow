@@ -246,7 +246,9 @@ revoke execute on function pf_claim_transfer(text) from anon;
 -- ── CardMirror integration ────────────────────────────────────────────────────
 -- Personal API tokens let external desktop apps (CardMirror) authenticate as a
 -- specific browser identity without sharing the session JWT. Tokens are opaque
--- random strings shown once; only their SHA-256 hash is stored here.
+-- random strings shown once; only their SHA-256 hash is stored here. The hash
+-- also names the private Realtime channel (`pf:cm:<hash>`) the plugin and the
+-- flow tab talk on — readable only by the owner, per the policy below.
 
 create table if not exists pf_api_tokens (
   id          uuid primary key default gen_random_uuid(),
@@ -296,9 +298,10 @@ revoke all on function pf_revoke_api_token() from public;
 grant execute on function pf_revoke_api_token() to authenticated;
 revoke execute on function pf_revoke_api_token() from anon;
 
--- Presence: one row per user. The open flow tab upserts this whenever the
--- focused cell or active sheet changes. Edge Functions read it with the service
--- role key (bypassing RLS) when CardMirror queries for the current focus state.
+-- Presence: one row per user. The flow tab that last had focus upserts this
+-- when the focused cell or sheet changes, and once a minute while open. The
+-- CardMirror plugin reads it (via pf-presence) only to explain a send that no
+-- tab acknowledged: paused, or no flow open.
 create table if not exists pf_flow_presence (
   user_id     uuid primary key references auth.users(id) on delete cascade,
   flow_id     text,
@@ -315,6 +318,21 @@ create table if not exists pf_flow_presence (
 );
 
 alter table pf_flow_presence add column if not exists paused boolean not null default false;
+
+-- Every write refreshes updated_at. The column default only fires on INSERT,
+-- so without this each later upsert kept the first write's timestamp and
+-- pf-presence reported an in-use tab as closed five minutes after it opened.
+-- (The client also stamps updated_at itself, so this is belt and braces.)
+create or replace function pf_presence_touch() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+
+drop trigger if exists pf_presence_touch on pf_flow_presence;
+create trigger pf_presence_touch before insert or update on pf_flow_presence
+  for each row execute function pf_presence_touch();
 
 alter table pf_flow_presence enable row level security;
 

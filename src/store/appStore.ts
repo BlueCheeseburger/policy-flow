@@ -40,7 +40,8 @@ export type View =
 export interface UndoToast {
   id: string;
   message: string;
-  onUndo: () => void | Promise<void>;
+  /** Absent for a plain notice — the toast then has no Undo button. */
+  onUndo?: () => void | Promise<void>;
 }
 
 interface AppState {
@@ -62,6 +63,8 @@ interface AppState {
 
   undoToasts: UndoToast[];
   pushUndoToast: (message: string, onUndo: () => void | Promise<void>) => void;
+  /** A transient message with nothing to undo (e.g. a CardMirror result). */
+  pushNotice: (message: string) => void;
   dismissUndoToast: (id: string) => void;
 }
 
@@ -83,6 +86,9 @@ export const useApp = create<AppState>((set) => ({
   undoToasts: [],
   pushUndoToast: (message, onUndo) => set((s) => ({
     undoToasts: [...s.undoToasts, { id: crypto.randomUUID(), message, onUndo }].slice(-3),
+  })),
+  pushNotice: (message) => set((s) => ({
+    undoToasts: [...s.undoToasts, { id: crypto.randomUUID(), message }].slice(-3),
   })),
   dismissUndoToast: (id) => set((s) => ({ undoToasts: s.undoToasts.filter((t) => t.id !== id) })),
 }));

@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import * as Y from 'yjs';
 import { useApp, FlowMeta } from '../store/appStore';
 import SharePanel from './SharePanel';
+import CrossExPanel from './CrossExPanel';
 import { createFlowSync, FlowSyncHandle, RemoteCursor, PresenceUser, FlowSyncStatus } from '../lib/flowSync';
 import { isShortcutDisabled, matchesShortcut } from '../lib/shortcutPrefs';
 import {
@@ -21,7 +22,11 @@ import { flowDataToXlsxBase64 } from '../utils/flowImport';
 import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
 import { summarizeFlowSheet } from '../platform/aiFeatures';
-import { saveSnapshot as cloudSaveSnapshot, shareUrl, updatePresence, clearPresence, setPresencePaused, hasApiToken } from '../platform/cloud';
+import { saveSnapshot as cloudSaveSnapshot, shareUrl, updatePresence, clearPresence, setPresencePaused, getApiTokenHash } from '../platform/cloud';
+import {
+  CM_CARDS_EVENT, CM_CARDS_ACK_EVENT, CM_JUMP_EVENT, CM_JUMP_ACK_EVENT, CM_ACK_TIMEOUT_MS,
+  cmTopic, cardCellHtml, parseCardsMsg, type CmCard, type CmCardsResult, type CmJumpAck, type CmJumpMsg,
+} from '../lib/cardMirrorLink';
 import { cloudConfigured, supabase } from '../platform/supabase';
 import { readSettings, SETTINGS_CHANGED_EVENT } from '../platform/settings';
 import { readFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
@@ -84,6 +89,12 @@ export const NUM_ROWS = DEFAULT_ROWS;
  * bounds what a corrupt or hand-edited stored count can ask the grid to draw.
  */
 export const MAX_ROWS = 5000;
+
+// localStorage stamp naming the flow tab that receives CardMirror sends, and
+// how long a silent owner keeps it (background tabs' timers can be throttled
+// to once a minute, so this is several heartbeats, not one).
+const CM_OWNER_KEY = 'pf-cardmirror-owner-tab';
+const CM_OWNER_STALE_MS = 3 * 60_000;
 const DEFAULT_COL_WIDTH = 185;
 const DEFAULT_FONT_SIZE = 13;
 
@@ -253,7 +264,7 @@ function colBg(color: string, isDark: boolean, isHeader: boolean): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function FlowView() {
-  const { view, setView, event, flowsIndex, setFlowsIndex, identityId, pushUndoToast } = useApp();
+  const { view, setView, event, flowsIndex, setFlowsIndex, identityId, pushUndoToast, pushNotice } = useApp();
   const flowId = view.kind === 'flow' ? (view as any).flowId : undefined;
   const flowMeta: FlowMeta | undefined = flowsIndex.find((f) => f.id === flowId);
   const dark = useDarkMode();
@@ -309,18 +320,27 @@ export default function FlowView() {
   );
 
   // CardMirror status chip. Two independent things decide what it shows:
-  // whether a token still exists server-side (cmTokenValid — null while the
-  // first check is in flight), and whether THIS browser has locally paused
+  // whether this identity is paired (cmHash), and whether THIS browser has locally paused
   // delivery (cmPaused). Pausing is a local, instant, no-RPC toggle — not a
   // revoke — so clicking the chip is always reversible with no re-pairing.
   // The actual hard revoke (deleting the token) lives only in Settings'
   // Disconnect button.
-  const [cmTokenValid, setCmTokenValid] = useState<boolean | null>(null);
+  // The pairing token's hash — undefined while the first read is in flight,
+  // null when unpaired. cmLive: the private channel is actually subscribed.
+  const [cmHash, setCmHash] = useState<string | null | undefined>(undefined);
+  const [cmLive, setCmLive] = useState(false);
   const [cmPaused, setCmPaused] = useState(() => localStorage.getItem('pf-cardmirror-paused') === '1');
   // Read from effects with a narrower dependency array than [cmPaused] itself
   // (the broadcast listener below only re-subscribes on [identityId]).
   const cmPausedRef = useRef(cmPaused);
   useEffect(() => { cmPausedRef.current = cmPaused; }, [cmPaused]);
+
+  // Cross-ex doc (a bullet outline beside the grid). cxRef mirrors cxText for
+  // code that runs outside a render — seeding the live doc, snapshots.
+  const [cxText, setCxText] = useState('');
+  const cxRef = useRef('');
+  const cxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [cxOpen, setCxOpen] = useState(() => localStorage.getItem('pf-cx-open') === '1');
 
   // Default side colors, straight from Settings. These used to be read from
   // two standalone localStorage keys that nothing in this app ever wrote — a
@@ -872,7 +892,7 @@ export default function FlowView() {
       try {
         // seedDoc wants every layout field present; a payload built before a
         // column color was ever set can be missing one.
-        seedDoc(seed, { ...payload, columnColors: payload.columnColors ?? [] }, cellToHtml);
+        seedDoc(seed, { ...payload, columnColors: payload.columnColors ?? [], cx: cxRef.current }, cellToHtml);
         await cloudSaveSnapshot(flowId, flowMeta?.name ?? 'Flow', u8ToB64(Y.encodeStateAsUpdate(seed)));
       } catch { /* offline or over the size cap — the local copy is unaffected */ }
       finally { seed.destroy(); }
@@ -909,7 +929,19 @@ export default function FlowView() {
           sm = new Y.Map();
           sm.set('id', sh.id);
           sm.set('name', sh.name);
-          sm.set('cells', new Y.Map<Y.Text>());
+          // A sheet the doc has never seen (a duplicate, an undone delete)
+          // arrives WITH its cells — nobody can have typed into it remotely
+          // yet, so there's nothing to clobber. It used to arrive empty, so a
+          // duplicated tab showed its contents here and blank to everyone else
+          // (and blank to you, after a reload).
+          const cells = new Y.Map<Y.Text>();
+          for (const [k, v] of Object.entries(sh.cells ?? {})) {
+            if (!v) continue;
+            const t = new Y.Text();
+            t.insert(0, cellToHtml(v));
+            cells.set(k, t);
+          }
+          sm.set('cells', cells);
           sm.set('arrows', new Y.Array());
           arr.push([sm]);
         } else if (sm.get('name') !== sh.name) {
@@ -921,6 +953,31 @@ export default function FlowView() {
       if (haveIds.size) {
         for (let i = arr.length - 1; i >= 0; i--) {
           if (haveIds.has(arr.get(i).get('id'))) arr.delete(i, 1);
+        }
+      }
+    }, LOCAL_ORIGIN);
+  }
+
+  // Push every cell of every sheet into the doc where it differs. Only for
+  // wholesale state changes the user asked for — undo and redo — never on a
+  // routine save, where a stale local copy would overwrite a partner's typing.
+  // Without it an undo in a live flow (every flow) stayed local: partners never
+  // saw it, and a reload brought the undone text straight back from the doc.
+  function pushAllCellsToDoc(sheets: SheetData[]) {
+    const handle = syncRef.current;
+    if (!liveRef.current || !handle) return;
+    const doc = handle.doc;
+    doc.transact(() => {
+      for (const sh of sheets) {
+        const sm = findSheet(doc, sh.id);
+        if (!sm) continue;
+        const cells = sheetCells(sm);
+        const keys = new Set([...Object.keys(sh.cells ?? {}), ...Array.from(cells.keys())]);
+        for (const k of keys) {
+          const want = sh.cells?.[k] ? cellToHtml(sh.cells[k]) : '';
+          const t = cells.get(k);
+          if (t) { if (t.toString() !== want) setYText(t, want, LOCAL_ORIGIN); }
+          else if (want) { const nt = new Y.Text(); nt.insert(0, want); cells.set(k, nt); }
         }
       }
     }, LOCAL_ORIGIN);
@@ -953,6 +1010,7 @@ export default function FlowView() {
       variant: s.variant, pfOrder: s.pfOrder, sheets, numRows: s.numRows,
       columnWidths: [...s.columnWidths], customColumns: s.customColumns ? [...s.customColumns] : null,
       columnColors: [...s.columnColors], fontSize: s.fontSize, zoom: s.zoom,
+      cx: cxRef.current,
     };
   }
 
@@ -1077,12 +1135,126 @@ export default function FlowView() {
     return () => { window.history.replaceState(null, '', '/'); };
   }, [flowId, flowMeta?.shareToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── CardMirror presence publishing ────────────────────────────────────────────
-  // Write the focused cell + sheet to pf_flow_presence so CardMirror can target
-  // the right row. Debounced to avoid spamming on rapid arrow-key movement.
+  // ── Cross-ex doc ─────────────────────────────────────────────────────────────
+  // Saved on its own key rather than inside the flow's data: it isn't part of
+  // the grid's undo history, and keeping it out means an undo on the grid can
+  // never roll back a CX note. In a live room it's the doc's `cx` Y.Text, so
+  // partners see each other's notes and it rides along in the cloud snapshot.
+  useEffect(() => {
+    if (!flowId) return;
+    cxRef.current = ''; setCxText('');
+    let cancelled = false;
+    void readKey(`flow_cx_${flowId}`).then((v) => {
+      if (cancelled || typeof v !== 'string') return;
+      // The live doc already spoke for this flow — it wins over the local copy.
+      const live = syncRef.current?.doc.getText('cx').toString();
+      if (live) return;
+      cxRef.current = v; setCxText(v);
+      const yt = syncRef.current?.doc.getText('cx');
+      if (yt && liveRef.current) setYText(yt, v, LOCAL_ORIGIN);
+    });
+    return () => { cancelled = true; };
+  }, [flowId]);
+
+  function saveCxLocal(text: string) {
+    if (!flowId) return;
+    if (cxSaveTimer.current) clearTimeout(cxSaveTimer.current);
+    const id = flowId;
+    cxSaveTimer.current = setTimeout(() => { void writeKey(`flow_cx_${id}`, text); }, 400);
+  }
+
+  function updateCx(next: string) {
+    if (next === cxRef.current) return;
+    cxRef.current = next; setCxText(next);
+    saveCxLocal(next);
+    const yt = liveRef.current ? syncRef.current?.doc.getText('cx') : null;
+    if (yt) setYText(yt, next, LOCAL_ORIGIN);
+  }
+
+  useEffect(() => {
+    const handle = syncRef.current;
+    if (!liveReady || !handle) return;
+    const yt = handle.doc.getText('cx');
+    // Adopt the room's notes; if the room has none yet, contribute ours.
+    const shared = yt.toString();
+    if (!shared && cxRef.current) setYText(yt, cxRef.current, LOCAL_ORIGIN);
+    else if (shared !== cxRef.current) { cxRef.current = shared; setCxText(shared); saveCxLocal(shared); }
+    const onCx = (_e: unknown, tr: Y.Transaction) => {
+      if (tr.origin === LOCAL_ORIGIN) return;
+      const v = yt.toString();
+      if (v === cxRef.current) return;
+      cxRef.current = v; setCxText(v); saveCxLocal(v);
+    };
+    yt.observe(onCx);
+    return () => yt.unobserve(onCx);
+  }, [liveReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function toggleCx(open = !cxOpen) {
+    setCxOpen(open);
+    try { localStorage.setItem('pf-cx-open', open ? '1' : '0'); } catch { /* private mode */ }
+  }
+
+  // ── CardMirror ─────────────────────────────────────────────────────────────
+  // The plugin and this tab talk over one private broadcast channel named by
+  // the pairing token's hash (lib/cardMirrorLink.ts). Cards come in, acks go
+  // back; right-click sends a jump request out and waits for the plugin's ack.
+
+  // Which open tab receives a send. Every flow tab of this identity is
+  // subscribed to the same channel, so without an owner a card would land in
+  // every open flow at once. The owner is whichever tab was focused last — the
+  // one the user is actually flowing in — stamped in localStorage (shared by
+  // every tab of this origin) and kept fresh by a heartbeat, so a crashed
+  // owner's claim expires instead of swallowing sends forever.
+  const cmTabId = useRef(crypto.randomUUID());
+  function claimCardMirrorTab() {
+    try { localStorage.setItem(CM_OWNER_KEY, JSON.stringify({ tab: cmTabId.current, t: Date.now() })); } catch { /* private mode */ }
+  }
+  function readCmOwner(): { tab: string; t: number } | null {
+    try { return JSON.parse(localStorage.getItem(CM_OWNER_KEY) || 'null'); } catch { return null; }
+  }
+  function isCardMirrorTab(): boolean {
+    const o = readCmOwner();
+    if (o?.tab === cmTabId.current) return true;
+    // Nobody live owns it (never claimed, or the owner closed/crashed): the
+    // tab the user can see picks it up.
+    const stale = !o || Date.now() - o.t > CM_OWNER_STALE_MS;
+    return stale && document.visibilityState === 'visible';
+  }
+  useEffect(() => {
+    if (!flowId) return;
+    claimCardMirrorTab();
+    const onFocus = () => claimCardMirrorTab();
+    window.addEventListener('focus', onFocus);
+    const beat = setInterval(() => { if (readCmOwner()?.tab === cmTabId.current) claimCardMirrorTab(); }, 30_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      clearInterval(beat);
+      if (readCmOwner()?.tab === cmTabId.current) { try { localStorage.removeItem(CM_OWNER_KEY); } catch { /* ignore */ } }
+    };
+  }, [flowId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Presence: what pf-presence reports (flow/sheet names, paused). The plugin
+  // only consults it to explain a send nobody acked — delivery itself no
+  // longer depends on it — so it's written by the owning tab only, debounced
+  // on focus/sheet changes, and re-stamped every minute so an idle-but-open
+  // tab doesn't age out.
   const presenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPresenceKey = useRef('');
   const pausedSentRef = useRef(false);
+  function publishPresence() {
+    if (!flowId || !identityId || !cloudConfigured || cmPausedRef.current) return;
+    const s = snap.current;
+    const sheet = s.sheets[s.activeSheetIdx];
+    if (!sheet) return;
+    const [ri, ci] = (focusedCell.current ?? '0-0').split('-').map(Number);
+    void updatePresence({
+      flowId, flowName: flowMeta?.name ?? 'Flow',
+      sheetId: sheet.id, sheetName: sheet.name,
+      focusedRow: Number.isFinite(ri) ? ri : 0, focusedCol: Number.isFinite(ci) ? ci : 0,
+    });
+  }
+  const publishPresenceRef = useRef(publishPresence);
+  publishPresenceRef.current = publishPresence;
   useEffect(() => {
     if (!flowId || !identityId || !cloudConfigured) return;
     // Paused means "don't let CardMirror target me" — mark the row paused
@@ -1091,83 +1263,142 @@ export default function FlowView() {
       if (!pausedSentRef.current) { pausedSentRef.current = true; void setPresencePaused(true); }
       return;
     }
-    pausedSentRef.current = false;
+    if (pausedSentRef.current) { pausedSentRef.current = false; lastPresenceKey.current = ''; }
     const activeSheet = sheets[activeSheetIdx];
     if (!activeSheet) return;
-    const fc = focusedCell.current;
-    const [ri, ci] = fc ? fc.split('-').map(Number) : [0, 0];
-    const key = `${flowId}:${activeSheet.id}:${ri}:${ci}`;
+    const key = `${flowId}:${activeSheet.id}:${activeSheet.name}:${focusedCell.current ?? ''}`;
     if (key === lastPresenceKey.current) return;
     lastPresenceKey.current = key;
     if (presenceTimer.current) clearTimeout(presenceTimer.current);
-    presenceTimer.current = setTimeout(() => {
-      updatePresence({
-        flowId, flowName: flowMeta?.name ?? 'Flow',
-        sheetId: activeSheet.id, sheetName: activeSheet.name,
-        focusedRow: isNaN(ri) ? 0 : ri, focusedCol: isNaN(ci) ? 0 : ci,
-      });
-    }, 400);
-    return () => { if (presenceTimer.current) clearTimeout(presenceTimer.current); };
+    presenceTimer.current = setTimeout(() => { if (isCardMirrorTab()) publishPresenceRef.current(); }, 400);
   }); // intentionally runs every render — tracks every focus/sheet change
-
-  // Clear presence when this flow view unmounts (tab closed or navigated away).
   useEffect(() => {
     if (!flowId || !cloudConfigured) return;
-    return () => { void clearPresence(); };
+    const beat = setInterval(() => { if (isCardMirrorTab()) publishPresenceRef.current(); }, 60_000);
+    return () => {
+      clearInterval(beat);
+      if (presenceTimer.current) clearTimeout(presenceTimer.current);
+      // Only the owner clears: closing a second flow tab must not mark the
+      // one you're flowing in as closed.
+      if (readCmOwner()?.tab === cmTabId.current || !readCmOwner()) void clearPresence();
+    };
   }, [flowId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── CardMirror broadcast listener ─────────────────────────────────────────────
-  // Receives { taglineText, authorDate, sheetId?, targetRow, targetCol } from
-  // pf-send-card and applies it as a cell edit, then advances focus down one row.
+  // Pairing: the token hash names the channel. Re-read periodically so a code
+  // generated (or revoked) elsewhere takes effect without reopening the flow.
   useEffect(() => {
-    if (!identityId || !supabase || !cloudConfigured) return;
-    const channel = supabase
-      .channel(`pf:user:${identityId}`)
-      .on('broadcast', { event: 'pf-card' }, ({ payload }: any) => {
-        if (cmPausedRef.current) return;
-        const { taglineText, authorDate, targetRow, targetCol } = payload ?? {};
-        if (typeof taglineText !== 'string' || typeof authorDate !== 'string') return;
-        const ci: number = typeof targetCol === 'number' ? targetCol : (focusedCell.current ? Number(focusedCell.current.split('-')[1]) : 0);
-        let ri: number = typeof targetRow === 'number' ? targetRow : (focusedCell.current ? Number(focusedCell.current.split('-')[0]) : 0);
-        // Walk forward to the next empty cell in this column.
-        while (ri < snap.current.numRows) {
-          const existing = cellsRef.current[`${ri}-${ci}`];
-          if (!existing || !existing.replace(/<[^>]*>/g, '').trim()) break;
-          ri++;
-        }
-        if (ri >= snap.current.numRows) return; // grid full in this column
-        // Build as plain text (entity-escaped) then sanitize through the same
-        // path every other cell edit uses, so CardMirror can't inject markup.
-        const tmp = document.createElement('div');
-        tmp.textContent = `${taglineText} — ${authorDate}`;
-        const html = sanitizeCellHtml(tmp.innerHTML);
-        cellsRef.current[`${ri}-${ci}`] = html;
-        dirtyKeys.current.add(`${ri}-${ci}`);
-        const el = cellEls.current[`${ri}-${ci}`];
-        if (el) { el.innerHTML = html; }
-        noteCellEdit(`${ri}-${ci}`, html);
-        // Advance focus one row down.
-        const nextRi = ri + 1;
-        if (nextRi < snap.current.numRows) {
-          setTimeout(() => focusCell(`${nextRi}-${ci}`, 'start'), 0);
-        }
-      })
-      .subscribe();
-    return () => { void supabase!.removeChannel(channel); };
-  }, [identityId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── CardMirror status chip poll ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!cloudConfigured) return;
+    if (!cloudConfigured || !identityId) return;
     let cancelled = false;
     async function check() {
-      const r = await hasApiToken();
-      if (!cancelled) setCmTokenValid(r.ok ? r.data : false);
+      const r = await getApiTokenHash();
+      // A failed read (offline) keeps what we had rather than unpairing.
+      if (!cancelled && r.ok) setCmHash(r.data);
+      else if (!cancelled) setCmHash((h) => (h === undefined ? null : h));
     }
     check();
     const id = setInterval(check, 30_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+    window.addEventListener('focus', check);
+    return () => { cancelled = true; clearInterval(id); window.removeEventListener('focus', check); };
+  }, [identityId]);
+
+  // Put a batch of sent cards into the open sheet. Lands as one contiguous run
+  // in the focused column — starting at the focused row, or the first place
+  // below it with room for the whole batch — so a block's cards never get
+  // threaded through gaps between rows already written. Grows the grid when it
+  // runs off the bottom. One save, so one ⌘Z takes the whole batch back out.
+  function applyCardMirrorCards(cards: CmCard[]): CmCardsResult {
+    const s = snap.current;
+    const sheet = s.sheets[s.activeSheetIdx];
+    if (!sheet || cellsOwnerId.current !== sheet.id) return { ok: false, error: 'bad-request' };
+    const [fr, fc] = (focusedCell.current ?? '0-0').split('-').map(Number);
+    const ci = Math.max(0, Math.min(columns.length - 1, Number.isFinite(fc) ? fc : 0));
+    const hasText = (r: number) => !!htmlToText(cellToHtml(cellsRef.current[`${r}-${ci}`] ?? '')).trim();
+    let start = Math.max(0, Number.isFinite(fr) ? fr : 0);
+    for (;;) {
+      while (start < MAX_ROWS && hasText(start)) start++;
+      let clear = 0;
+      while (clear < cards.length && start + clear < MAX_ROWS && !hasText(start + clear)) clear++;
+      if (clear === cards.length) break;
+      if (start + clear >= MAX_ROWS) return { ok: false, error: 'grid-full' };
+      start += clear;
+    }
+    const rows = Math.max(s.numRows, start + cards.length);
+    cards.forEach((card, i) => {
+      const key = `${start + i}-${ci}`;
+      const html = sanitizeCellHtml(cardCellHtml(card));
+      cellsRef.current[key] = html;
+      const el = cellEls.current[key];
+      if (el) { el.innerHTML = html; el.dataset.init = '1'; }
+      pushLiveCell(key, html);
+      dirtyKeys.current.add(key);
+    });
+    if (rows > s.numRows) {
+      // A little headroom past the batch, so the next send has somewhere to go.
+      const grown = Math.min(MAX_ROWS, Math.max(rows, s.numRows) + 10);
+      setNumRows(grown);
+      snap.current = { ...snap.current, numRows: grown };
+    }
+    scheduleSave();
+    const next = start + cards.length;
+    // After the render that mounts any new rows.
+    setTimeout(() => { if (next < snap.current.numRows) focusCell(`${next}-${ci}`, 'start'); }, 30);
+    return { ok: true, placed: cards.length, flowName: flowMeta?.name ?? 'Flow', sheetName: sheet.name };
+  }
+  const applyCardsRef = useRef(applyCardMirrorCards);
+  applyCardsRef.current = applyCardMirrorCards;
+
+  const cmChannelRef = useRef<ReturnType<NonNullable<typeof supabase>['channel']> | null>(null);
+  const cmJumpWaiters = useRef(new Map<string, (ack: CmJumpAck) => void>());
+  useEffect(() => {
+    if (!cmHash || !supabase || !flowId) { setCmLive(false); return; }
+    const channel = supabase.channel(cmTopic(cmHash), { config: { broadcast: { self: false } } });
+    const reply = (event: string, payload: object) => { void channel.send({ type: 'broadcast', event, payload }); };
+    channel
+      .on('broadcast', { event: CM_CARDS_EVENT }, ({ payload }: any) => {
+        const msg = parseCardsMsg(payload);
+        if (!msg) {
+          if (typeof payload?.id === 'string' && isCardMirrorTab()) reply(CM_CARDS_ACK_EVENT, { id: payload.id, ok: false, error: 'bad-request' });
+          return;
+        }
+        // Only the tab the user is flowing in answers; the rest stay silent so
+        // the plugin hears exactly one ack.
+        if (!isCardMirrorTab()) return;
+        if (cmPausedRef.current) { reply(CM_CARDS_ACK_EVENT, { id: msg.id, ok: false, error: 'paused' }); return; }
+        reply(CM_CARDS_ACK_EVENT, { id: msg.id, ...applyCardsRef.current(msg.cards) });
+      })
+      .on('broadcast', { event: CM_JUMP_ACK_EVENT }, ({ payload }: any) => {
+        const done = typeof payload?.id === 'string' ? cmJumpWaiters.current.get(payload.id) : undefined;
+        if (done) { cmJumpWaiters.current.delete(payload.id); done(payload as CmJumpAck); }
+      })
+      .subscribe((status) => setCmLive(status === 'SUBSCRIBED'));
+    cmChannelRef.current = channel;
+    return () => {
+      cmChannelRef.current = null;
+      setCmLive(false);
+      void supabase!.removeChannel(channel);
+    };
+  }, [cmHash, flowId]);
+
+  // Right-click on a row that came from CardMirror: ask the plugin to jump to
+  // the card. The plugin answers with what happened, so every outcome gets a
+  // specific message rather than a silent nothing.
+  async function jumpToCardMirror(source: string) {
+    const channel = cmChannelRef.current;
+    if (!cmHash) { pushNotice('Pair CardMirror in Settings to jump back to cards.'); return; }
+    if (!channel || !cmLive) { pushNotice("Can't reach CardMirror right now — check your connection."); return; }
+    const id = crypto.randomUUID();
+    const ack = await new Promise<CmJumpAck | null>((resolve) => {
+      const timer = setTimeout(() => { cmJumpWaiters.current.delete(id); resolve(null); }, CM_ACK_TIMEOUT_MS);
+      cmJumpWaiters.current.set(id, (a) => { clearTimeout(timer); resolve(a); });
+      void channel.send({ type: 'broadcast', event: CM_JUMP_EVENT, payload: { id, source } satisfies CmJumpMsg });
+    });
+    if (!ack) { pushNotice("CardMirror didn't answer. Make sure it's open with the Policy Flow plugin enabled."); return; }
+    if (ack.ok) return;
+    if (ack.error === 'doc-not-open') pushNotice(ack.docTitle ? `Open “${ack.docTitle}” in CardMirror, then right-click again.` : 'Open that document in CardMirror, then right-click again.');
+    else if (ack.error === 'not-found') pushNotice(`CardMirror couldn't find that card${ack.docTitle ? ` in “${ack.docTitle}”` : ''} — it may have been edited or deleted.`);
+    else if (ack.error === 'not-ready') pushNotice('In CardMirror, press ~ once (Send to flow) to wake the plugin, then right-click again.');
+    else pushNotice(`CardMirror couldn't jump there (${ack.error}).`);
+  }
 
   // Local-only, instant, reversible in either direction — never touches the
   // token. A real unpair is Settings' Disconnect button (revokeApiToken).
@@ -1312,6 +1543,7 @@ export default function FlowView() {
     dirtyKeys.current.clear();
     snap.current = { ...snap.current, sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, activeSheetIdx: idx, variant: s.variant, pfOrder: s.pfOrder, numRows: s.numRows };
     persist({ sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, variant: s.variant, pfOrder: s.pfOrder, event: s.event, numRows: s.numRows });
+    pushAllCellsToDoc(s.sheets);
     setCellNonce((n) => n + 1);
     requestAnimationFrame(recomputeArrows);
     setTimeout(() => { restoring.current = false; }, 0);
@@ -2847,14 +3079,17 @@ export default function FlowView() {
             about this browser's identity, not this specific flow. A click here
             only pauses/resumes delivery locally (instant, reversible, no RPC) —
             it never revokes the token. Real unpairing is Settings' Disconnect. */}
-        {cloudConfigured && cmTokenValid !== null && (() => {
-          const label = !cmTokenValid ? 'Not connected' : cmPaused ? 'Off' : 'Connected';
-          const on = cmTokenValid && !cmPaused;
-          const tooltip = !cmTokenValid
+        {cloudConfigured && cmHash !== undefined && (() => {
+          const paired = !!cmHash;
+          const label = !paired ? 'Not connected' : cmPaused ? 'Paused' : cmLive ? 'Connected' : 'Connecting…';
+          const on = paired && !cmPaused && cmLive;
+          const tooltip = !paired
             ? 'CardMirror not connected — pair it in Settings'
             : cmPaused
-              ? 'Paused — click to resume'
-              : 'Connected — click to pause';
+              ? 'Paused — sends from CardMirror are turned away. Click to resume'
+              : cmLive
+                ? 'Ready for sends from CardMirror — click to pause'
+                : 'Reaching the server… sends will work once this says Connected';
           return (
             <Tooltip text={tooltip}>
               <button
@@ -2862,13 +3097,13 @@ export default function FlowView() {
                 style={{
                   fontSize: 11,
                   color: on ? 'var(--nav-active-color)' : 'var(--ink-muted)',
-                  cursor: cmTokenValid ? 'pointer' : 'default',
+                  cursor: paired ? 'pointer' : 'default',
                   background: 'none',
                   border: 'none',
                   padding: 0,
                 }}
-                disabled={!cmTokenValid}
-                onClick={cmTokenValid ? toggleCmPaused : undefined}
+                disabled={!paired}
+                onClick={paired ? toggleCmPaused : undefined}
               >
                 <span style={{
                   width: 5, height: 5, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
@@ -2912,6 +3147,9 @@ export default function FlowView() {
 
         {/* Find */}
         <ToolBtn onClick={() => { setFindOpen(true); setTimeout(() => findInputRef.current?.focus(), 0); }} active={findOpen} title="Find (⌘F)"><IcoFind /></ToolBtn>
+        <ToolBtn onClick={() => toggleCx()} active={cxOpen} title={cxOpen ? 'Hide cross-ex notes' : 'Cross-ex notes'}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.02em' }}>CX</span>
+        </ToolBtn>
 
         {/* Draw arrow */}
         <ToolBtn
@@ -2979,7 +3217,8 @@ export default function FlowView() {
           used to be a banner row above the grid, which pushed the whole flow
           down the moment ⌘L was pressed and back up on the second click —
           the flow jumping twice per arrow. */}
-      <div className="relative flex-1 min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0 flex">
+      <div className="relative flex-1 min-w-0 min-h-0 flex flex-col">
       {drawMode && (
         <div
           className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 text-xs rounded-full shadow-lg glass-elevated pointer-events-auto"
@@ -3281,7 +3520,18 @@ export default function FlowView() {
                       // instead of moving the group.
                       contentEditable={!drawMode && !picked}
                       suppressContentEditableWarning
-                      onFocus={() => { focusedCell.current = cellKey; syncRef.current?.setActiveCell(activeSheet?.id ?? null, cellKey); }}
+                      onFocus={() => { focusedCell.current = cellKey; claimCardMirrorTab(); syncRef.current?.setActiveCell(activeSheet?.id ?? null, cellKey); }}
+                      // A row sent from CardMirror carries its card's source
+                      // token; right-clicking it jumps back to that card. Any
+                      // other cell keeps the normal browser menu.
+                      onContextMenu={(e) => {
+                        const cell = e.currentTarget;
+                        const hit = (e.target as Element).closest?.('[data-cm]');
+                        const src = (hit && cell.contains(hit) ? hit : cell.querySelector('[data-cm]'))?.getAttribute('data-cm');
+                        if (!src) return;
+                        e.preventDefault();
+                        void jumpToCardMirror(src);
+                      }}
                       onBlur={(e) => { if (liveRef.current) { pushLiveCell(cellKey, e.currentTarget.innerHTML); syncRef.current?.setActiveCell(null, null); } }}
                       onInput={(e) => handleInput(ri, ci, e)}
                       onPaste={(e) => handlePaste(ri, ci, e)}
@@ -3405,6 +3655,8 @@ export default function FlowView() {
           </div>
         </div>
       </div>
+      </div>
+      {cxOpen && <CrossExPanel value={cxText} onChange={updateCx} onClose={() => toggleCx(false)} />}
       </div>
 
       {/* Right-click menu for a sheet tab. Rendered here, not inside the tab:

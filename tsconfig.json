@@ -18,5 +18,5 @@
   // over from Warroom unmodified so the two copies can't drift, and they were
   // written against a looser config; they are run (by tsx) rather than
   // compiled, and a run that asserts 626 times is the check that matters.
-  "include": ["src"]
+  "include": ["src", "cardmirror-plugin/src"]
 }

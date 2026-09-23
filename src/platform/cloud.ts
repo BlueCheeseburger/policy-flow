@@ -98,9 +98,11 @@ export async function saveSnapshot(flowId: string, name: string, content: string
 export async function loadSnapshot(flowId: string): Promise<CloudResult<{ content: string | null; name: string }>> {
   try {
     const { sb } = await client();
-    const { data, error } = await sb.from('pf_flows').select('content, name').eq('id', flowId).single();
+    // maybeSingle: a flow opened for the first time has no row yet, which is
+    // "nothing saved", not an error (.single() answered it with a 406).
+    const { data, error } = await sb.from('pf_flows').select('content, name').eq('id', flowId).maybeSingle();
     if (error) throw error;
-    return { ok: true, data: { content: data.content ?? null, name: data.name } };
+    return { ok: true, data: { content: data?.content ?? null, name: data?.name ?? '' } };
   } catch (e) { return fail(e); }
 }
 
@@ -195,15 +197,23 @@ export async function revokeApiToken(): Promise<CloudResult<null>> {
   } catch (e) { return fail(e); }
 }
 
-/** True if this user has a token on file (does not expose the hash). */
-export async function hasApiToken(): Promise<CloudResult<boolean>> {
+/**
+ * The SHA-256 of this identity's pairing token, or null when unpaired. It names
+ * the private Realtime channel the CardMirror plugin talks on (see
+ * lib/cardMirrorLink.ts) — the plugin hashes the raw token it holds, this reads
+ * the stored hash back, and RLS limits the read to the token's owner.
+ */
+export async function getApiTokenHash(): Promise<CloudResult<string | null>> {
   try {
     const { sb } = await client();
-    const { count, error } = await sb
+    const { data, error } = await sb
       .from('pf_api_tokens')
-      .select('id', { count: 'exact', head: true });
+      .select('token_hash')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
     if (error) throw error;
-    return { ok: true, data: (count ?? 0) > 0 };
+    return { ok: true, data: data?.token_hash ?? null };
   } catch (e) { return fail(e); }
 }
 
@@ -227,6 +237,11 @@ export async function updatePresence(state: {
       // is "start acting normal again," not "start acting normal, but only
       // once something else also flips paused back off."
       paused: false,
+      // Stamped here because nothing else does: the column's default only
+      // fires on INSERT, so every later upsert kept the first write's time and
+      // pf-presence called an in-use tab "not open" five minutes after it
+      // opened. (schema.sql now also has a trigger for this.)
+      updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id' });
   } catch { /* presence is best-effort; never block the UI */ }
 }
@@ -247,6 +262,6 @@ export async function clearPresence(): Promise<void> {
 export async function setPresencePaused(paused: boolean): Promise<void> {
   try {
     const { sb, userId } = await client();
-    await sb.from('pf_flow_presence').upsert({ user_id: userId, paused }, { onConflict: 'user_id' });
+    await sb.from('pf_flow_presence').upsert({ user_id: userId, paused, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
   } catch { /* best-effort */ }
 }

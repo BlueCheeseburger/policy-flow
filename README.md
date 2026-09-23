@@ -7,16 +7,17 @@ no account, no sign-up, nothing to install.
 
 1. **Flow, with real-time co-flowing.** A seven-column policy grid (1AC → 2AR)
    with tabs per position, arrows between cells, multi-cell selection, find,
-   undo, zoom, and keyboard shortcuts — and unlike a shared Google Sheet, a
-   flow can be turned into a live room: everyone who opens the link edits the
-   same flow at once with colored cursors, no account or sign-up for anyone.
+   undo, zoom, a bullet-point cross-ex doc beside the grid, and keyboard
+   shortcuts. Unlike a shared Google Sheet, every flow is a live room: anyone
+   with the link edits it at once with colored cursors, no account for anyone.
 2. **Auto Flow.** Drop a Verbatim-format `.docx` speech doc and it parses the
    tag/cite hierarchy straight into flow tabs and columns for free, no API key
    needed; adding one lets a model sort cards into the right tab/column and
    write short summaries instead.
-3. **CardMirror integration.** A paired companion card-cutting session can
-   push a cut card straight into the right cell of your open flow the moment
-   it's cut — no alt-tabbing to copy-paste a card mid-round.
+3. **CardMirror plugin.** Press `~` on a tag in CardMirror to drop it (with
+   its cite) into the column you're flowing, or on a hat or block to send
+   every card under it at once. Right-click any row that came in that way to
+   jump straight back to the card. See [cardmirror-plugin/](cardmirror-plugin/).
 4. **Local-first, no account required, ever.** Flows are saved to this
    browser and work fully offline; a one-time transfer code moves them to a
    new device or browser without creating an account anywhere.

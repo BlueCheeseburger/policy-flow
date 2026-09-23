@@ -10,6 +10,8 @@
 //
 // Lives apart from FlowView.tsx so it can be exercised by scripts/test-cell-paste.ts.
 
+import { CM_SOURCE_RE } from './cardMirrorLink';
+
 // Highlighter color (amber) for ⌘⇧H. Cells force dark ink on any highlighted
 // span (see the .flow-cell rule in index.css) so it stays readable in dark mode.
 export const HILITE = '#fde68a';
@@ -79,6 +81,19 @@ function collapseSourceWhitespace(s: string): string {
   return s.replace(/[\n\r\t]+/g, ' ');
 }
 
+// An allowed element's opening tag, with only the attributes a cell may keep:
+// a filtered style, and — on a span — a CardMirror source token, which is how
+// right-click jumps back to the card a row came from. The token must be the
+// exact opaque shape (never a URL, never markup), and it survives copy/paste
+// between cells so a moved row stays linked.
+function openTag(el: HTMLElement, props: Set<string>): string {
+  const name = el.tagName.toLowerCase();
+  const style = sanitizeStyle(el.getAttribute('style') || '', props);
+  const cm = el.tagName === 'SPAN' ? el.getAttribute('data-cm') : null;
+  const cmAttr = cm && CM_SOURCE_RE.test(cm) ? ` data-cm="${escapeAttr(cm)}"` : '';
+  return `<${name}${style ? ` style="${escapeAttr(style)}"` : ''}${cmAttr}>`;
+}
+
 function sanitizeNode(node: Node, out: string[], props: Set<string>): void {
   node.childNodes.forEach((child) => {
     if (child.nodeType === 3 /* TEXT_NODE */) {
@@ -96,8 +111,7 @@ function sanitizeNode(node: Node, out: string[], props: Set<string>): void {
     }
     const name = tag.toLowerCase();
     if (VOID_TAGS.has(tag)) { out.push(`<${name}>`); return; }
-    const style = sanitizeStyle(el.getAttribute('style') || '', props);
-    out.push(style ? `<${name} style="${escapeAttr(style)}">` : `<${name}>`);
+    out.push(openTag(el, props));
     sanitizeNode(el, out, props);
     out.push(`</${name}>`);
   });
@@ -156,8 +170,7 @@ function pasteNode(node: Node, out: string[]): void {
     if (isBlock) out.push('<br>');
     if (!isBlock && ALLOWED_TAGS.has(tag)) {
       const name = tag.toLowerCase();
-      const style = sanitizeStyle(el.getAttribute('style') || '', PASTE_STYLE_PROPS);
-      out.push(style ? `<${name} style="${escapeAttr(style)}">` : `<${name}>`);
+      out.push(openTag(el, PASTE_STYLE_PROPS));
       pasteNode(el, out);
       out.push(`</${name}>`);
     } else {

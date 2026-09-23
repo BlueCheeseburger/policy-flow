@@ -20,7 +20,7 @@ export default function UndoToasts() {
 function Toast({ id, message, onUndo, onDismiss }: {
   id: string;
   message: string;
-  onUndo: () => void | Promise<void>;
+  onUndo?: () => void | Promise<void>;
   onDismiss: (id: string) => void;
 }) {
   useEffect(() => {
@@ -35,12 +35,14 @@ function Toast({ id, message, onUndo, onDismiss }: {
       role="status"
     >
       <span>{message}</span>
-      <button
-        className="btn px-2 py-0.5 text-xs"
-        onClick={async () => { await onUndo(); onDismiss(id); }}
-      >
-        Undo
-      </button>
+      {onUndo && (
+        <button
+          className="btn px-2 py-0.5 text-xs"
+          onClick={async () => { await onUndo(); onDismiss(id); }}
+        >
+          Undo
+        </button>
+      )}
       <button className="btn-icon px-1 text-xs" onClick={() => onDismiss(id)} title="Dismiss">✕</button>
     </div>
   );

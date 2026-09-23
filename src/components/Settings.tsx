@@ -6,7 +6,7 @@ import {
 } from '../platform/ai';
 import { aiConfigured, type Provider } from '../platform/settings';
 import { readFlowPrefs, writeFlowPrefs, FLOW_PREFS_CHANGED_EVENT } from '../lib/flowPrefs';
-import { createTransferCode, claimTransferCode, createApiToken, revokeApiToken, hasApiToken } from '../platform/cloud';
+import { createTransferCode, claimTransferCode, createApiToken, revokeApiToken, getApiTokenHash } from '../platform/cloud';
 import { cloudConfigured } from '../platform/supabase';
 import { clearAll } from '../platform/storage';
 import Tooltip from './Tooltip';
@@ -15,6 +15,8 @@ import {
   findConflict, formatBinding, bindingFromEvent, isBindingValid, isShortcutDisabled,
   toggleShortcutDisabled, type KeyBinding,
 } from '../lib/shortcutPrefs';
+
+const CM_PLUGIN_RELEASES = 'https://github.com/BlueCheeseburger/policy-flow/releases/latest';
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   gemini: 'Gemini',
@@ -46,7 +48,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [cmError, setCmError] = useState('');
   useEffect(() => {
     if (!cloudConfigured) return;
-    hasApiToken().then((r) => { if (r.ok) setCmConnected(r.data); });
+    getApiTokenHash().then((r) => { if (r.ok) setCmConnected(!!r.data); });
   }, []);
   // Flow defaults live in their own store (lib/flowPrefs) because FlowView and
   // Home read them directly. Nothing in this app wrote them until now, which
@@ -110,12 +112,18 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         {cloudConfigured && (
           <Section title="CardMirror">
             <p className="text-sm leading-relaxed">
-              Generate a pairing code, paste it into CardMirror's Settings once, and CardMirror can send taglines directly into whichever cell is focused here.
-              The code grants access to all your flows and is tied to this browser — if you clear site data you'll need to re-pair.
+              With the Policy Flow plugin installed in CardMirror, press <kbd className="font-mono text-xs">~</kbd> on a tag to send it here with its cite. On a pocket, hat, or block, it sends every card under it.
+              Cards land in the focused column of the sheet you have open. Right-click a sent row to jump back to that card in CardMirror.
+            </p>
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--label-color)' }}>
+              To set it up, install the plugin from{' '}
+              <a href={CM_PLUGIN_RELEASES} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>its releases page</a>{' '}
+              (CardMirror desktop: Settings → Plugins, turn on Enable plugins, then relaunch). Generate a code below and paste it into the plugin's settings (the gear on its row).
+              The code is tied to this browser, so if you clear site data you'll need a new one.
             </p>
             {cmToken ? (
               <div className="flex flex-col gap-2">
-                <p className="text-xs" style={{ color: 'var(--label-color)' }}>Copy this code into CardMirror now — it won't be shown again.</p>
+                <p className="text-xs" style={{ color: 'var(--label-color)' }}>Paste this into the Policy Flow plugin's settings in CardMirror now. It won't be shown again, and any earlier code stops working.</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <code
                     className="px-3 h-8 inline-flex items-center rounded-[9px] font-mono text-sm tracking-[0.12em] select-all"
@@ -132,7 +140,9 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-sm flex items-center gap-1.5">
                   <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--accent)' }} />
-                  Connected
+                  {/* Paired, not "connected": whether the link is live right now
+                      is the flow toolbar chip's job. */}
+                  Paired
                 </span>
                 <button
                   className="btn h-8 px-3"
@@ -145,6 +155,19 @@ export default function Settings({ onClose }: { onClose: () => void }) {
                     setCmBusy(false);
                   }}
                 >Disconnect</button>
+                <button
+                  className="btn h-8 px-3"
+                  disabled={cmBusy}
+                  onClick={async () => {
+                    // Lost the code, or pairing a second machine's CardMirror:
+                    // a new code replaces the old one (one pairing at a time).
+                    setCmBusy(true); setCmError('');
+                    const res = await createApiToken();
+                    if (res.ok) setCmToken(res.data);
+                    else setCmError(res.error);
+                    setCmBusy(false);
+                  }}
+                >New code</button>
               </div>
             ) : (
               <button

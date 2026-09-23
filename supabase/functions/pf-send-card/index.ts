@@ -1,18 +1,21 @@
-// pf-send-card — broadcasts a tagline+author/date from CardMirror into the
-// open PolicyDebateFlow tab that belongs to the token holder.
+// pf-send-card — an HTTP way to put cards into the open Policy Flow tab of the
+// token holder, for clients that can't hold a Realtime socket. The CardMirror
+// plugin doesn't use this (it talks to the tab directly and gets an ack —
+// see src/lib/cardMirrorLink.ts); this is the fire-and-forget equivalent.
 //
 // POST /functions/v1/pf-send-card
 // Authorization: Bearer <raw_token>
 // Content-Type: application/json
-// Body: { taglineText: string, authorDate: string, sheetId?: string,
-//         targetRow?: number, targetCol?: number }
+// Body: { cards: [{ kind: 'card' | 'heading', text, cite?, source? }] }
+//   or, the original single-card shape: { taglineText: string, authorDate?: string }
 //
-// The flow tab must be subscribed to the Supabase Realtime channel
-// `pf:user:<userId>` and listening for broadcast event `pf-card`.
+// Broadcasts event `pf-cards` on the private channel `pf:cm:<sha256(token)>`,
+// which every open flow tab of the token's owner subscribes to; the tab the
+// user last focused applies it.
 //
-// 200 { ok: true }
+// 200 { ok: true, count }
 // 401 bad/unknown token
-// 422 missing required fields
+// 422 no usable cards
 // 500 internal
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -36,9 +39,20 @@ Deno.serve(async (req) => {
     if (!rawToken) return new Response(JSON.stringify({ error: 'Missing token' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
 
     const body = await req.json().catch(() => null);
-    const { taglineText, authorDate, sheetId, targetRow, targetCol } = body ?? {};
-    if (!taglineText || !authorDate) {
-      return new Response(JSON.stringify({ error: 'taglineText and authorDate are required' }), { status: 422, headers: { ...CORS, 'content-type': 'application/json' } });
+    const cards = Array.isArray(body?.cards)
+      ? body.cards
+      : body?.taglineText ? [{ kind: 'card', text: body.taglineText, ...(body.authorDate ? { cite: body.authorDate } : {}) }] : [];
+    const clean = cards
+      .filter((c: any) => c && (c.kind === 'card' || c.kind === 'heading') && typeof c.text === 'string' && c.text.trim())
+      .slice(0, 500)
+      .map((c: any) => ({
+        kind: c.kind,
+        text: String(c.text).slice(0, 2000),
+        ...(typeof c.cite === 'string' && c.cite.trim() ? { cite: c.cite.slice(0, 400) } : {}),
+        ...(typeof c.source === 'string' && /^cmsrc[0-9]{1,3}\.[A-Za-z0-9_-]{1,8000}$/.test(c.source) ? { source: c.source } : {}),
+      }));
+    if (!clean.length) {
+      return new Response(JSON.stringify({ error: 'No cards to send' }), { status: 422, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     const admin = createClient(
@@ -55,25 +69,10 @@ Deno.serve(async (req) => {
 
     if (!tokenRow) return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
 
-    // If the caller didn't supply row/col, read from the latest presence row.
-    let row = typeof targetRow === 'number' ? targetRow : null;
-    let col = typeof targetCol === 'number' ? targetCol : null;
-    let resolvedSheetId = sheetId ?? null;
-
-    if (row === null || col === null) {
-      const { data: presence } = await admin
-        .from('pf_flow_presence')
-        .select('focused_row, focused_col, sheet_id')
-        .eq('user_id', tokenRow.owner_id)
-        .maybeSingle();
-      if (presence) {
-        if (row === null) row = presence.focused_row;
-        if (col === null) col = presence.focused_col;
-        if (!resolvedSheetId) resolvedSheetId = presence.sheet_id;
-      }
-    }
-
-    // Broadcast via Supabase Realtime REST API (server-side broadcast).
+    // Realtime's REST broadcast takes the BARE topic — the `realtime:` prefix
+    // is what the client library adds on join. This function used to send
+    // `realtime:pf:user:<uid>`, a topic nothing subscribes to, so every send
+    // returned 200 and delivered nothing.
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const broadcastRes = await fetch(`${supabaseUrl}/realtime/v1/api/broadcast`, {
@@ -85,9 +84,9 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         messages: [{
-          topic: `realtime:pf:user:${tokenRow.owner_id}`,
-          event: 'pf-card',
-          payload: { taglineText, authorDate, sheetId: resolvedSheetId, targetRow: row, targetCol: col },
+          topic: `pf:cm:${hashed}`,
+          event: 'pf-cards',
+          payload: { id: crypto.randomUUID(), cards: clean },
         }],
       }),
     });
@@ -97,7 +96,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: `Broadcast failed: ${txt}` }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
-    return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ok: true, count: clean.length }), { headers: { ...CORS, 'content-type': 'application/json' } });
 
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
