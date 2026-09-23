@@ -8,12 +8,20 @@ import { CxBullet, CxLevel, cxToPlainText, normalizeCx, parseCx, pastedToBullets
  * text is split into bullets, with its own glyphs and numbering stripped.
  *
  * Controlled: `value` is the serialized outline (lib/crossEx.ts). FlowView
- * owns saving it and syncing it to partners in a live room.
+ * owns saving it and syncing it to partners in a live room — and in one, the
+ * header says so, and a partner's colored marker sits on the point they're
+ * typing in, so notes arriving from someone else never look like a glitch.
  */
-export default function CrossExPanel({ value, onChange, onClose }: {
+export default function CrossExPanel({ value, onChange, onClose, live, peers, onFocusBullet }: {
   value: string;
   onChange: (next: string) => void;
   onClose: () => void;
+  /** 'live': synced with the room now; 'connecting': will be; 'off': this device only. */
+  live: 'live' | 'connecting' | 'off';
+  /** Everyone else in the room, and which bullet (if any) they're in. */
+  peers: { color: string; index: number | null }[];
+  /** Tells partners which bullet this user is in (null when none). */
+  onFocusBullet: (index: number | null) => void;
 }) {
   const bullets = useMemo(() => parseCx(value), [value]);
   const inputs = useRef<(HTMLTextAreaElement | null)[]>([]);
@@ -146,6 +154,13 @@ export default function CrossExPanel({ value, onChange, onClose }: {
   }
 
   const empty = bullets.every((b) => !b.text.trim());
+  const others = peers.length;
+  const status = live === 'live'
+    ? (others ? `Live · ${others} other${others === 1 ? '' : 's'} here` : 'Live · shared with this flow')
+    : live === 'connecting' ? 'Connecting…' : 'This device only';
+  const statusTip = live === 'live'
+    ? 'Everyone with this flow open sees these notes as they’re typed.'
+    : live === 'connecting' ? 'Reaching the room — notes sync once connected.' : 'Not connected to a live room, so these notes stay on this device.';
 
   return (
     <aside
@@ -155,6 +170,14 @@ export default function CrossExPanel({ value, onChange, onClose }: {
     >
       <div className="flex items-center gap-2 px-3 h-9 shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--label-color)' }}>Cross-ex</span>
+        <span className="flex items-center gap-1 text-[10.5px] truncate" style={{ color: 'var(--label-color)' }} title={statusTip}>
+          <span
+            aria-hidden
+            className="inline-block rounded-full shrink-0"
+            style={{ width: 5, height: 5, background: live === 'live' ? '#22c55e' : 'var(--border-med)' }}
+          />
+          {status}
+        </span>
         <div className="flex-1" />
         <button
           className="btn px-2 py-0 text-[11px] leading-6"
@@ -170,8 +193,20 @@ export default function CrossExPanel({ value, onChange, onClose }: {
       </div>
       <div className="flex-1 min-h-0 overflow-auto scroll-thin px-3 py-2.5">
         <ul className="flex flex-col" style={{ gap: 2 }}>
-          {bullets.map((b, i) => (
-            <li key={i} className="flex items-start" style={{ paddingLeft: b.level ? 20 : 0 }}>
+          {bullets.map((b, i) => {
+            const here = peers.filter((p) => p.index === i);
+            return (
+            <li
+              key={i}
+              className="flex items-start relative rounded-[5px]"
+              style={{
+                paddingLeft: b.level ? 20 : 0,
+                // A partner typing here: their color, the same ring the grid
+                // draws around a cell they're in.
+                boxShadow: here.length ? `inset 2px 0 0 ${here[0].color}` : undefined,
+                background: here.length ? `color-mix(in srgb, ${here[0].color} 8%, transparent)` : undefined,
+              }}
+            >
               <span
                 aria-hidden
                 className="shrink-0 select-none text-center"
@@ -194,9 +229,12 @@ export default function CrossExPanel({ value, onChange, onClose }: {
                 }}
                 onKeyDown={(e) => onKeyDown(i, e)}
                 onPaste={(e) => onPaste(i, e)}
+                onFocus={() => onFocusBullet(i)}
+                onBlur={() => onFocusBullet(null)}
               />
             </li>
-          ))}
+            );
+          })}
         </ul>
       </div>
       <div className="px-3 py-1.5 text-[10.5px] shrink-0" style={{ color: 'var(--label-color)', borderTop: '1px solid var(--border-subtle)' }}>

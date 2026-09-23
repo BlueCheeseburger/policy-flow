@@ -29,9 +29,14 @@ this is a running app with no release cuts.
 - Fixed: undo and redo in a live flow never reached partners, and a reload
   brought the undone text back. A duplicated tab also showed up blank for
   everyone else.
-- The CardMirror chip now shows whether the connection is actually up
-  (Connected / Connecting / Paused), and Settings can issue a new code
-  without disconnecting first.
+- The CardMirror chip only appears once you've generated a pairing code,
+  and only says "Not connected" when the link has really been down for a
+  few seconds (Connected / Connecting / Paused otherwise). Settings can issue
+  a new code without disconnecting first.
+- Cross-ex notes show that they're shared: the header says "Live" and how
+  many others are in the flow, and a partner's colored marker sits on the
+  point they're typing in.
+- CardMirror plugin v0.1.0 released.
 
 ## 2026-09-15
 

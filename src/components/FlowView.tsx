@@ -94,6 +94,11 @@ export const MAX_ROWS = 5000;
 // how long a silent owner keeps it (background tabs' timers can be throttled
 // to once a minute, so this is several heartbeats, not one).
 const CM_OWNER_KEY = 'pf-cardmirror-owner-tab';
+
+// Live-cursor "sheet" for the cross-ex panel: a partner's awareness says
+// { sheetId: CX_CURSOR_SHEET, cell: '<bullet index>' } while they type there.
+// No real sheet has this id, so the grid never draws it.
+const CX_CURSOR_SHEET = '__cx__';
 const CM_OWNER_STALE_MS = 3 * 60_000;
 const DEFAULT_COL_WIDTH = 185;
 const DEFAULT_FONT_SIZE = 13;
@@ -329,6 +334,15 @@ export default function FlowView() {
   // null when unpaired. cmLive: the private channel is actually subscribed.
   const [cmHash, setCmHash] = useState<string | null | undefined>(undefined);
   const [cmLive, setCmLive] = useState(false);
+  // True once the channel has been down long enough to call it "not
+  // connected" rather than "still connecting" — a fresh load or a brief
+  // network blip shouldn't flash an alarm.
+  const [cmDown, setCmDown] = useState(false);
+  useEffect(() => {
+    if (cmLive || !cmHash) { setCmDown(false); return; }
+    const t = setTimeout(() => setCmDown(true), 8000);
+    return () => clearTimeout(t);
+  }, [cmLive, cmHash]);
   const [cmPaused, setCmPaused] = useState(() => localStorage.getItem('pf-cardmirror-paused') === '1');
   // Read from effects with a narrower dependency array than [cmPaused] itself
   // (the broadcast listener below only re-subscribes on [identityId]).
@@ -3079,16 +3093,17 @@ export default function FlowView() {
             about this browser's identity, not this specific flow. A click here
             only pauses/resumes delivery locally (instant, reversible, no RPC) —
             it never revokes the token. Real unpairing is Settings' Disconnect. */}
-        {cloudConfigured && cmHash !== undefined && (() => {
-          const paired = !!cmHash;
-          const label = !paired ? 'Not connected' : cmPaused ? 'Paused' : cmLive ? 'Connected' : 'Connecting…';
-          const on = paired && !cmPaused && cmLive;
-          const tooltip = !paired
-            ? 'CardMirror not connected — pair it in Settings'
-            : cmPaused
-              ? 'Paused — sends from CardMirror are turned away. Click to resume'
-              : cmLive
-                ? 'Ready for sends from CardMirror — click to pause'
+        {/* Only once paired: someone who never generated a code has nothing
+            to connect, so there's no state worth showing them here. */}
+        {cloudConfigured && !!cmHash && (() => {
+          const label = cmPaused ? 'Paused' : cmLive ? 'Connected' : cmDown ? 'Not connected' : 'Connecting…';
+          const on = !cmPaused && cmLive;
+          const tooltip = cmPaused
+            ? 'Paused — sends from CardMirror are turned away. Click to resume'
+            : cmLive
+              ? 'Ready for sends from CardMirror — click to pause'
+              : cmDown
+                ? "Can't reach the server, so sends from CardMirror won't arrive. Check your connection"
                 : 'Reaching the server… sends will work once this says Connected';
           return (
             <Tooltip text={tooltip}>
@@ -3097,13 +3112,12 @@ export default function FlowView() {
                 style={{
                   fontSize: 11,
                   color: on ? 'var(--nav-active-color)' : 'var(--ink-muted)',
-                  cursor: paired ? 'pointer' : 'default',
+                  cursor: 'pointer',
                   background: 'none',
                   border: 'none',
                   padding: 0,
                 }}
-                disabled={!paired}
-                onClick={paired ? toggleCmPaused : undefined}
+                onClick={toggleCmPaused}
               >
                 <span style={{
                   width: 5, height: 5, borderRadius: '50%', flexShrink: 0, display: 'inline-block',
@@ -3656,7 +3670,19 @@ export default function FlowView() {
         </div>
       </div>
       </div>
-      {cxOpen && <CrossExPanel value={cxText} onChange={updateCx} onClose={() => toggleCx(false)} />}
+      {cxOpen && (
+        <CrossExPanel
+          value={cxText}
+          onChange={updateCx}
+          onClose={() => { syncRef.current?.setActiveCell(null, null); toggleCx(false); }}
+          live={liveReady && syncStatus === 'SUBSCRIBED' ? 'live' : live ? 'connecting' : 'off'}
+          peers={remoteCursors.map((c) => ({
+            color: c.user.color,
+            index: c.sheetId === CX_CURSOR_SHEET && c.cell != null ? Number(c.cell) : null,
+          }))}
+          onFocusBullet={(i) => syncRef.current?.setActiveCell(i === null ? null : CX_CURSOR_SHEET, i === null ? null : String(i))}
+        />
+      )}
       </div>
 
       {/* Right-click menu for a sheet tab. Rendered here, not inside the tab:
