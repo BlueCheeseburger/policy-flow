@@ -26,6 +26,57 @@ no account, no sign-up, nothing to install.
 
 See [changelog.md](changelog.md) for what's changed in this fork over time.
 
+## Using the CardMirror plugin
+
+The plugin connects [CardMirror](https://github.com/BlueCheeseburger/cardmirror)
+to your open flow, so you can build the flow from your speech doc without
+copying and pasting.
+
+**What it does**
+
+- **Sends cards.** Put the cursor on a tag in CardMirror and press `~`. The
+  tag lands in the flow column you last clicked into, with its short cite
+  (`Tag — Smith 24`).
+- **Sends whole sections.** Press `~` on a pocket, hat, or block and every
+  card under it comes over in order, as one run of rows. Section titles come
+  in underlined; you can turn that off in the plugin's settings. Cards never
+  get threaded between rows you've already written. If there isn't room
+  below your cursor, the run starts further down. ⌘Z removes the whole send
+  at once.
+- **Jumps back.** Right-click any row that came from CardMirror and
+  CardMirror scrolls to that card and comes to the front. If the document
+  isn't open, you're told which one to open.
+- **Tells you what happened.** Each send shows a message in CardMirror, like
+  "Sent 6 rows to Adv 1", "Policy Flow is paused", or "No flow is open".
+
+**Setting it up**
+
+1. In CardMirror (desktop), open Settings → Plugins, turn on
+   **Enable plugins**, and relaunch.
+2. Install the plugin. On the CardMirror fork (1.12.0-bcb.2 or newer), type
+   `BlueCheeseburger/policy-flow` into the Plugins tab. On other versions,
+   download `plugin.js` from the
+   [latest release](https://github.com/BlueCheeseburger/policy-flow/releases/latest)
+   and choose **Load plugin from file…**.
+3. Here in Policy Flow, open Settings → CardMirror → **Generate pairing code**.
+4. Back in CardMirror's Plugins tab, click the gear on the Policy Flow row
+   and paste the code into **Pairing code**.
+
+Once you're paired, the flow's toolbar shows **CardMirror: Connected**.
+Click it to pause sends, and click again to resume. The pairing code belongs
+to this browser, so if you clear site data or switch browsers, generate a new
+one. **New code** in Settings replaces the old code, and **Disconnect**
+unpairs completely.
+
+**Good to know**
+
+- Cards go into the flow tab you last clicked in, if you have several open.
+- Anyone sharing a live flow with you sees the rows you send, but they can't
+  see or send through your pairing.
+- On CardMirror versions older than 1.12.0-bcb.2, press `~` once after
+  launching before right-click jumping works, and CardMirror won't come to
+  the front on its own.
+
 ## Running it
 
 ```bash
