@@ -21,7 +21,6 @@ Add a reference to `changelog.md` to have our fork's changes there. Have a `chan
 ## Misc
 
 - Do not include my personal info in your commits.
-- Make sure `CLAUDE.md` is gitignored.
 - Keep commit messages short
 - Automatically push and commit after major features have been pushed
 - **This only applies to local sessions, do not do this if you are a cloud session:** I am directing my agent working on policy-card-cutter (another policy debate vercel vite web app), to follow your look and feel, so your Claude Code session will recieve messages from that agent. The codebase for policy-card-cutter is `Downloads/policy-card-cutter`, so you can always just look at the actual code, just don't edit that code since its not your codebase.
