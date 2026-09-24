@@ -3,6 +3,17 @@
 What's changed in this fork, newest first. Grouped by day, not by version —
 this is a running app with no release cuts.
 
+## 2026-09-24
+
+- Fixed: arrows in a live flow never reached partners and disappeared after a
+  reload. Drawing, moving, deleting, and undoing arrows now syncs.
+- Fixed: undo in a shared flow could erase a partner's text. It now undoes
+  only your own step and leaves everything your partners did, however many
+  steps back you go.
+- Fixed: the first edit after opening a flow sometimes couldn't be undone
+  (when live sync finished before the local copy, or the tab opened in the
+  background).
+
 ## 2026-09-23
 
 - Fixed: reloading a flow that hadn't been shared yet dropped you on Home.

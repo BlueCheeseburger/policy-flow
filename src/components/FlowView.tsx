@@ -6,7 +6,7 @@ import CrossExPanel from './CrossExPanel';
 import { createFlowSync, FlowSyncHandle, RemoteCursor, PresenceUser, FlowSyncStatus } from '../lib/flowSync';
 import { isShortcutDisabled, matchesShortcut } from '../lib/shortcutPrefs';
 import {
-  seedDoc, docToData, cellText, setYText, metaMap, sheetsArr, sheetCells, findSheet,
+  seedDoc, docToData, cellText, setYText, metaMap, sheetsArr, sheetCells, sheetArrows, findSheet,
   u8ToB64, LOCAL_ORIGIN, REMOTE_ORIGIN, FlowDocData,
 } from '../lib/flowDoc';
 import {
@@ -18,6 +18,7 @@ import {
   clearCells, selectionKeys, isSelected as selHas, cellKey as selCellKey,
 } from '../lib/flowSelection';
 import { flushCellsIntoSheets } from '../lib/flowCellFlush';
+import { mergeUndoStep, rebaseCell, rebaseArrows } from '../lib/undoMerge';
 import { flowDataToXlsxBase64 } from '../utils/flowImport';
 import { readKey, writeKey } from '../platform/storage';
 import { saveBase64 } from '../platform/files';
@@ -525,7 +526,15 @@ export default function FlowView() {
   // over the new tab's cells, where they sat until something else happened to
   // trigger a recompute. That was "arrows follow me between tabs".
   const snap = useRef({ sheets, columnWidths, customColumns, columnColors, fontSize, zoom, variant, pfOrder, activeSheetIdx, numRows, event: 'policy' as 'policy' | 'pf' });
-  useLayoutEffect(() => { snap.current = { sheets, columnWidths, customColumns, columnColors, fontSize, zoom, variant, pfOrder, activeSheetIdx, numRows, event: flowEvent }; });
+  // Set when the flow's content is (re)loaded; the undo starting point is
+  // recorded right after the render that commits it, below. It used to be a
+  // requestAnimationFrame, which never fires in a background tab — a flow
+  // opened there had no starting point, so its first edit couldn't be undone.
+  const needsBaseline = useRef(false);
+  useLayoutEffect(() => {
+    snap.current = { sheets, columnWidths, customColumns, columnColors, fontSize, zoom, variant, pfOrder, activeSheetIdx, numRows, event: flowEvent };
+    if (needsBaseline.current) { needsBaseline.current = false; recordHistory(); }
+  });
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -658,7 +667,7 @@ export default function FlowView() {
       }
       setLoaded(true);
       history.current = []; histIdx.current = -1;
-      requestAnimationFrame(recordHistory);
+      needsBaseline.current = true;
     }).catch(() => {
       const ev: 'policy' | 'pf' = flowEvent;
       const prefs = readFlowPrefs();
@@ -675,7 +684,7 @@ export default function FlowView() {
       setActiveSheetIdx(0);
       setLoaded(true);
       history.current = []; histIdx.current = -1;
-      requestAnimationFrame(recordHistory);
+      needsBaseline.current = true;
     });
     // Also on unmount — a pending save must never outlive the view that armed it.
     return () => { if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; } };
@@ -774,7 +783,7 @@ export default function FlowView() {
       // undo the GRID (and block the field's own undo), so fixing a typo in
       // your CX notes quietly rolled back the flow. Find still opens from
       // anywhere; nothing else here applies.
-      const t = e.target as HTMLElement | null;
+      const t = e.target instanceof HTMLElement ? e.target : null;
       const inOtherField = !!t && !t.closest('.flow-cell') &&
         (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
       if (inOtherField) {
@@ -986,10 +995,25 @@ export default function FlowView() {
             cells.set(k, t);
           }
           sm.set('cells', cells);
-          sm.set('arrows', new Y.Array());
+          const arrows = new Y.Array();
+          if (sh.arrows?.length) arrows.push(sh.arrows.map((a) => ({ ...a })));
+          sm.set('arrows', arrows);
           arr.push([sm]);
-        } else if (sm.get('name') !== sh.name) {
-          sm.set('name', sh.name);
+        } else {
+          if (sm.get('name') !== sh.name) sm.set('name', sh.name);
+          // Arrows. Nothing used to write them after the doc was first seeded,
+          // so an arrow drawn in a live flow never reached partners and was
+          // gone after a reload (the rejoin hydrates from the doc). They're a
+          // handful of small objects per tab, so a differing tab is simply
+          // replaced wholesale; remote arrow edits are applied to local state
+          // as they land (see onArrows), so this copy isn't stale.
+          let arrowsY = sheetArrows(sm) as Y.Array<any> | undefined;
+          if (!arrowsY) { arrowsY = new Y.Array(); sm.set('arrows', arrowsY); }
+          const want = sh.arrows ?? [];
+          if (JSON.stringify(arrowsY.toArray()) !== JSON.stringify(want)) {
+            if (arrowsY.length) arrowsY.delete(0, arrowsY.length);
+            if (want.length) arrowsY.push(want.map((a) => ({ ...a })));
+          }
         }
         haveIds.delete(sh.id);
       });
@@ -1002,21 +1026,24 @@ export default function FlowView() {
     }, LOCAL_ORIGIN);
   }
 
-  // Push every cell of every sheet into the doc where it differs. Only for
-  // wholesale state changes the user asked for — undo and redo — never on a
-  // routine save, where a stale local copy would overwrite a partner's typing.
-  // Without it an undo in a live flow (every flow) stayed local: partners never
-  // saw it, and a reload brought the undone text straight back from the doc.
-  function pushAllCellsToDoc(sheets: SheetData[]) {
+  // Write an undo/redo step's cells into the shared doc — ONLY the cells the
+  // step changed (see lib/undoMerge.ts). Writing every cell that differed from
+  // the doc used to overwrite partners' text: this browser's copy of a tab
+  // it isn't looking at can be behind the doc. Without any push, though, an
+  // undo stayed local — partners never saw it and a reload brought the text
+  // back — so the step's own cells go out, and nothing else.
+  function pushChangedCellsToDoc(sheets: SheetData[], changed: Map<string, Set<string> | null>) {
     const handle = syncRef.current;
     if (!liveRef.current || !handle) return;
     const doc = handle.doc;
     doc.transact(() => {
       for (const sh of sheets) {
+        if (!changed.has(sh.id)) continue;
         const sm = findSheet(doc, sh.id);
-        if (!sm) continue;
+        if (!sm) continue; // new to the doc: syncStructureToDoc created it with its cells
         const cells = sheetCells(sm);
-        const keys = new Set([...Object.keys(sh.cells ?? {}), ...Array.from(cells.keys())]);
+        const only = changed.get(sh.id);
+        const keys = only ?? new Set([...Object.keys(sh.cells ?? {}), ...Array.from(cells.keys())]);
         for (const k of keys) {
           const want = sh.cells?.[k] ? cellToHtml(sh.cells[k]) : '';
           const t = cells.get(k);
@@ -1114,6 +1141,37 @@ export default function FlowView() {
     if (el) { el.innerHTML = clean; el.dataset.init = '1'; }
   }
 
+  // Replace each tab's arrows with the doc's copy (a remote arrow edit).
+  function applyRemoteArrows(doc: Y.Doc) {
+    const fromDoc = new Map<string, FlowArrow[]>();
+    const arr = sheetsArr(doc);
+    for (let i = 0; i < arr.length; i++) {
+      const sm = arr.get(i);
+      fromDoc.set(sm.get('id'), ((sheetArrows(sm)?.toArray() ?? []) as FlowArrow[]).map((a) => ({ ...a })));
+    }
+    const s = snap.current;
+    let changed = false;
+    const updated = s.sheets.map((sh) => {
+      const next = fromDoc.get(sh.id);
+      if (!next || JSON.stringify(next) === JSON.stringify(sh.arrows ?? [])) return sh;
+      changed = true;
+      rebaseArrows(history.current, sh.id, next);
+      return { ...sh, arrows: next };
+    });
+    if (!changed) return;
+    applyingRemote.current = true;
+    try {
+      setSheets(updated);
+      snap.current = { ...snap.current, sheets: updated };
+      // Local mirror only — applyingRemote keeps persist from echoing this
+      // back into the doc it just came from.
+      persist({ sheets: updated });
+    } finally {
+      setTimeout(() => { applyingRemote.current = false; }, 0);
+    }
+    requestAnimationFrame(recomputeArrows);
+  }
+
   // ── Live lifecycle: attach / detach the sync handle ─────────────────────────
   useEffect(() => {
     if (!flowId || !live || !identityId) return;
@@ -1139,6 +1197,13 @@ export default function FlowView() {
       // we're the first writer — seed it from what we already have on screen.
       if (!docToData(handle.doc)) seedDoc(handle.doc, currentDataForDoc(), cellToHtml);
       else hydrateFromDoc(handle.doc, { remountCells: true });
+      // Undo starts from what the room actually holds. If live sync won the
+      // race with the local load, the load bailed before recording a starting
+      // point, so the first edit after opening couldn't be undone. If the
+      // local load won, its starting point was the local copy, and undoing
+      // back to it would push that older copy to everyone in the room.
+      history.current = []; histIdx.current = -1;
+      needsBaseline.current = true;
       handle.onCursors((c) => { if (!cancelled) setRemoteCursors(c); });
       handle.onStatus((s) => {
         if (cancelled) return;
@@ -1464,9 +1529,22 @@ export default function FlowView() {
     const doc = handle.doc;
     const onMeta = (_e: any, tr: Y.Transaction) => { if (tr.origin === REMOTE_ORIGIN) hydrateFromDoc(doc, { remountCells: false }); };
     const onSheets = (_e: any, tr: Y.Transaction) => { if (tr.origin === REMOTE_ORIGIN) hydrateFromDoc(doc, { remountCells: true }); };
+    // A partner drew, moved, or deleted an arrow: take the doc's arrows for
+    // every tab (cell text is left alone — it has its own observer below).
+    const onArrows = (events: Y.YEvent<any>[], tr: Y.Transaction) => {
+      if (tr.origin !== REMOTE_ORIGIN) return;
+      const touched = events.some((ev) => ev.path[1] === 'arrows'
+        || (ev.target instanceof Y.Map && ev.path.length === 1 && ev.changes.keys.has('arrows')));
+      if (touched) applyRemoteArrows(doc);
+    };
     metaMap(doc).observe(onMeta);
     sheetsArr(doc).observe(onSheets);
-    return () => { metaMap(doc).unobserve(onMeta); sheetsArr(doc).unobserve(onSheets); };
+    sheetsArr(doc).observeDeep(onArrows);
+    return () => {
+      metaMap(doc).unobserve(onMeta);
+      sheetsArr(doc).unobserve(onSheets);
+      sheetsArr(doc).unobserveDeep(onArrows);
+    };
   }, [liveReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Observe the *active* sheet's cells; patch remote text edits into the DOM.
@@ -1482,11 +1560,19 @@ export default function FlowView() {
       applyingRemote.current = true;
       try {
         events.forEach((ev: any) => {
+          // A partner's edit is written into the undo history too, so this
+          // user's undo never reverts it (lib/undoMerge.ts).
           if (ev.target instanceof Y.Text && ev.path.length >= 1) {
-            patchRemoteCell(String(ev.path[ev.path.length - 1]), ev.target.toString());
+            const key = String(ev.path[ev.path.length - 1]);
+            const html = ev.target.toString();
+            patchRemoteCell(key, html);
+            rebaseCell(history.current, sheetId, key, sanitizeCellHtml(html || ''));
           } else if (ev.target === cells && ev.changes?.keys) {
             ev.changes.keys.forEach((_chg: any, key: string) => {
-              const t = cells.get(key); patchRemoteCell(key, t ? t.toString() : '');
+              const t = cells.get(key);
+              const html = t ? t.toString() : '';
+              patchRemoteCell(key, html);
+              rebaseCell(history.current, sheetId, key, sanitizeCellHtml(html));
             });
           }
         });
@@ -1573,8 +1659,14 @@ export default function FlowView() {
     syncHistButtons();
   }
 
-  function restoreSnapshot(s: FlowSnapshot) {
+  function restoreSnapshot(saved: FlowSnapshot, from: FlowSnapshot) {
     restoring.current = true;
+    // In a live room, undo only what this step changed and leave partners'
+    // work (see lib/undoMerge.ts). Alone, the saved copy is simply the answer.
+    const merged = liveRef.current
+      ? mergeUndoStep(flushInto(snap.current.sheets), from.sheets, saved.sheets)
+      : null;
+    const s: FlowSnapshot = merged ? { ...saved, sheets: merged.sheets } : saved;
     // Stay on the tab the user is looking at. Undo is for edits, not navigation:
     // switching tabs records no snapshot, so an older one still carries whatever
     // tab happened to be open when it was taken — restoring that index yanked you
@@ -1593,17 +1685,17 @@ export default function FlowView() {
     dirtyKeys.current.clear();
     snap.current = { ...snap.current, sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, activeSheetIdx: idx, variant: s.variant, pfOrder: s.pfOrder, numRows: s.numRows };
     persist({ sheets: s.sheets, columnColors: s.columnColors, customColumns: s.customColumns, columnWidths: s.columnWidths, variant: s.variant, pfOrder: s.pfOrder, event: s.event, numRows: s.numRows });
-    pushAllCellsToDoc(s.sheets);
+    if (merged) pushChangedCellsToDoc(s.sheets, merged.changed);
     setCellNonce((n) => n + 1);
     requestAnimationFrame(recomputeArrows);
     setTimeout(() => { restoring.current = false; }, 0);
   }
 
   function undo() {
-    if (histIdx.current > 0) { histIdx.current -= 1; restoreSnapshot(history.current[histIdx.current]); syncHistButtons(); }
+    if (histIdx.current > 0) { const from = history.current[histIdx.current]; histIdx.current -= 1; restoreSnapshot(history.current[histIdx.current], from); syncHistButtons(); }
   }
   function redo() {
-    if (histIdx.current < history.current.length - 1) { histIdx.current += 1; restoreSnapshot(history.current[histIdx.current]); syncHistButtons(); }
+    if (histIdx.current < history.current.length - 1) { const from = history.current[histIdx.current]; histIdx.current += 1; restoreSnapshot(history.current[histIdx.current], from); syncHistButtons(); }
   }
 
   function scheduleSave() {
