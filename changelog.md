@@ -5,6 +5,17 @@ this is a running app with no release cuts.
 
 ## 2026-09-24
 
+- Notes drawer: the CX button and a new RFD button open one drawer beside the
+  grid with a tab for each. The RFD is free text for the reason for decision,
+  with a word count. Both notes save as you type, sync live to everyone in
+  the flow, and carry over when a flow is duplicated.
+- Rows sent from CardMirror have a teal stripe down their left edge.
+- Exporting to .xlsx now includes the cross-ex and RFD notes as their own
+  sheets, and importing that file brings them back as notes.
+- Fixed: .xlsx export and import stopped at 60 rows, silently dropping the
+  rest of a longer flow.
+- Fixed: exporting a flow with two tabs of the same name (or two long names
+  that match once cut to Excel's 31 characters) failed.
 - Fixed: arrows in a live flow never reached partners and disappeared after a
   reload. Drawing, moving, deleting, and undoing arrows now syncs.
 - Fixed: undo in a shared flow could erase a partner's text. It now undoes

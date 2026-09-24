@@ -95,6 +95,9 @@
   /* Accent — the personality colour of the theme */
   --accent:      #4b53c4;
   --accent-soft: rgba(75,83,196,0.1);
+  /* Rail on a row that came from CardMirror. Teal: distinct from aff blue,
+     neg red/green, the accent, and a partner's cursor ring. */
+  --cm-rail:     #0d9488;
   --pos:  #18a06a;
   --neg:  #d8475e;
   --aff:  #3f6fd6;
@@ -181,6 +184,7 @@ html.dark {
 
   --accent:      #7c82ee;
   --accent-soft: rgba(124,130,238,0.18);
+  --cm-rail:     #2dd4bf;
   --pos:  #34d39a;
   --neg:  #ff5a76;
   --aff:  #6f9bff;
@@ -604,6 +608,18 @@ html.dark .docx-viewer-wrap:not(.docx-force-light) * {
    this up too: nothing is stored per cell, it's the baseline the cell renders at. */
 .flow-cell {
   font-weight: 700;
+}
+
+/* A row that came from CardMirror: a teal rail down its left edge, so sent
+   rows are recognisable at a glance, and the context-menu cursor over the
+   tagline hints that right-click jumps back to the card. Read straight off
+   the markup (the tagline's data-cm span), so it follows the row through
+   moves, copy/paste, undo, and live sync with nothing stored per cell. */
+.flow-cell:has(span[data-cm]) {
+  box-shadow: inset 3px 0 0 var(--cm-rail);
+}
+.flow-cell span[data-cm] {
+  cursor: context-menu;
 }
 
 /* Cells selected with ⌘-click, ready to be moved or formatted as a group. */

@@ -1,5 +1,5 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CxBullet, CxLevel, cxToPlainText, normalizeCx, parseCx, pastedToBullets, serializeCx } from '../lib/crossEx';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
+import { CxBullet, CxLevel, normalizeCx, parseCx, pastedToBullets, serializeCx } from '../lib/crossEx';
 
 /**
  * The flow's cross-ex doc: a side panel of bullet points and sub-points, and
@@ -8,16 +8,14 @@ import { CxBullet, CxLevel, cxToPlainText, normalizeCx, parseCx, pastedToBullets
  * text is split into bullets, with its own glyphs and numbering stripped.
  *
  * Controlled: `value` is the serialized outline (lib/crossEx.ts). FlowView
- * owns saving it and syncing it to partners in a live room — and in one, the
- * header says so, and a partner's colored marker sits on the point they're
- * typing in, so notes arriving from someone else never look like a glitch.
+ * owns saving it and syncing it to partners; NotesDrawer supplies the frame
+ * (live status, copy, close). In a live room a partner's colored marker sits
+ * on the point they're typing in, so notes arriving from someone else never
+ * look like a glitch.
  */
-export default function CrossExPanel({ value, onChange, onClose, live, peers, onFocusBullet }: {
+export default function CrossExPanel({ value, onChange, peers, onFocusBullet }: {
   value: string;
   onChange: (next: string) => void;
-  onClose: () => void;
-  /** 'live': synced with the room now; 'connecting': will be; 'off': this device only. */
-  live: 'live' | 'connecting' | 'off';
   /** Everyone else in the room, and which bullet (if any) they're in. */
   peers: { color: string; index: number | null }[];
   /** Tells partners which bullet this user is in (null when none). */
@@ -27,7 +25,6 @@ export default function CrossExPanel({ value, onChange, onClose, live, peers, on
   const inputs = useRef<(HTMLTextAreaElement | null)[]>([]);
   // Where the caret goes after a structural edit (split, merge, indent).
   const pendingFocus = useRef<{ index: number; caret: number } | null>(null);
-  const [copied, setCopied] = useState(false);
 
   function commit(next: CxBullet[], focus?: { index: number; caret: number }) {
     if (focus) pendingFocus.current = focus;
@@ -154,43 +151,9 @@ export default function CrossExPanel({ value, onChange, onClose, live, peers, on
   }
 
   const empty = bullets.every((b) => !b.text.trim());
-  const others = peers.length;
-  const status = live === 'live'
-    ? (others ? `Live · ${others} other${others === 1 ? '' : 's'} here` : 'Live · shared with this flow')
-    : live === 'connecting' ? 'Connecting…' : 'This device only';
-  const statusTip = live === 'live'
-    ? 'Everyone with this flow open sees these notes as they’re typed.'
-    : live === 'connecting' ? 'Reaching the room — notes sync once connected.' : 'Not connected to a live room, so these notes stay on this device.';
 
   return (
-    <aside
-      className="flex flex-col min-h-0 shrink-0"
-      style={{ width: 340, borderLeft: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)' }}
-      aria-label="Cross-ex notes"
-    >
-      <div className="flex items-center gap-2 px-3 h-9 shrink-0" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--label-color)' }}>Cross-ex</span>
-        <span className="flex items-center gap-1 text-[10.5px] truncate" style={{ color: 'var(--label-color)' }} title={statusTip}>
-          <span
-            aria-hidden
-            className="inline-block rounded-full shrink-0"
-            style={{ width: 5, height: 5, background: live === 'live' ? '#22c55e' : 'var(--border-med)' }}
-          />
-          {status}
-        </span>
-        <div className="flex-1" />
-        <button
-          className="btn px-2 py-0 text-[11px] leading-6"
-          disabled={empty}
-          onClick={() => {
-            void navigator.clipboard.writeText(cxToPlainText(bullets)).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            });
-          }}
-        >{copied ? 'Copied' : 'Copy'}</button>
-        <button className="btn-icon px-1 text-xs" onClick={onClose} title="Close cross-ex" aria-label="Close cross-ex">✕</button>
-      </div>
+    <>
       <div className="flex-1 min-h-0 overflow-auto scroll-thin px-3 py-2.5">
         <ul className="flex flex-col" style={{ gap: 2 }}>
           {bullets.map((b, i) => {
@@ -240,6 +203,6 @@ export default function CrossExPanel({ value, onChange, onClose, live, peers, on
       <div className="px-3 py-1.5 text-[10.5px] shrink-0" style={{ color: 'var(--label-color)', borderTop: '1px solid var(--border-subtle)' }}>
         Enter new point · Tab sub-point · ⇧Tab back out
       </div>
-    </aside>
+    </>
   );
 }

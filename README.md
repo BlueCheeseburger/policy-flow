@@ -7,8 +7,8 @@ no account, no sign-up, nothing to install.
 
 1. **Flow, with real-time co-flowing.** A seven-column policy grid (1AC → 2AR)
    with tabs per position, arrows between cells, multi-cell selection, find,
-   undo, zoom, a bullet-point cross-ex doc beside the grid, and keyboard
-   shortcuts. Unlike a shared Google Sheet, every flow is a live room: anyone
+   undo, zoom, a notes drawer beside the grid (bullet-point cross-ex notes
+   and an RFD), and keyboard shortcuts. Unlike a shared Google Sheet, every flow is a live room: anyone
    with the link edits it at once with colored cursors, no account for anyone.
 2. **Auto Flow.** Drop a Verbatim-format `.docx` speech doc and it parses the
    tag/cite hierarchy straight into flow tabs and columns for free, no API key
@@ -43,6 +43,8 @@ copying and pasting.
   get threaded between rows you've already written. If there isn't room
   below your cursor, the run starts further down. ⌘Z removes the whole send
   at once.
+- **Marks what it sent.** Rows that came from CardMirror have a teal stripe
+  down their left edge, so you can tell them apart from what you typed.
 - **Jumps back.** Right-click any row that came from CardMirror and
   CardMirror scrolls to that card and comes to the front. If the document
   isn't open, you're told which one to open.

@@ -10,6 +10,7 @@
 //                                   customColumns, columnWidths, columnColors,
 //                                   sheetOrder (tab ids, in display order)
 //   doc.getText('cx')               the cross-ex outline (lib/crossEx.ts)
+//   doc.getText('rfd')              the RFD notes (free text)
 //   doc.getArray('sheets')          one Y.Map per sheet:
 //       { id, name, cells: Y.Map<cellKey, Y.Text>, arrows: Y.Array<arrow> }
 //
@@ -45,6 +46,8 @@ export interface FlowDocData {
   numRows?: number;
   /** The cross-ex outline (lib/crossEx.ts). Lives in its own Y.Text, `cx`. */
   cx?: string;
+  /** The RFD notes, free text. Its own Y.Text, `rfd`. */
+  rfd?: string;
 }
 
 export function metaMap(doc: Y.Doc): Y.Map<any> { return doc.getMap('meta'); }
@@ -116,6 +119,7 @@ export function seedDoc(doc: Y.Doc, data: FlowDocData, cellToHtml: (v: string) =
     meta.set('columnColors', data.columnColors);
     meta.set('sheetOrder', data.sheets.map((sh) => sh.id));
     if (data.cx) doc.getText('cx').insert(0, data.cx);
+    if (data.rfd) doc.getText('rfd').insert(0, data.rfd);
 
     const sheets = sheetsArr(doc);
     for (const sh of data.sheets) {

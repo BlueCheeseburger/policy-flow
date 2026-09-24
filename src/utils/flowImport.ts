@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
-import { makeDefaultData, POLICY_COLS, PF_PRO_FIRST_COLS, PF_CON_FIRST_COLS, NUM_ROWS } from '../components/FlowView';
+import { makeDefaultData, POLICY_COLS, PF_PRO_FIRST_COLS, PF_CON_FIRST_COLS, NUM_ROWS, MAX_ROWS } from '../components/FlowView';
+import { parseCx, pastedToBullets, serializeCx } from '../lib/crossEx';
 import { readFileBytes, fileNameOf } from '../platform/files';
 import { callAI, renderPrompt, parseJsonLoose } from '../platform/ai';
 import { aiConfigured } from '../platform/settings';
@@ -118,12 +119,43 @@ function detectHeader(aoa: string[][]): { headerRowIdx: number; match: HeaderMat
   return null;
 }
 
+// ── Notes (cross-ex, RFD) ─────────────────────────────────────────────────────
+
+export interface FlowNotes { cx?: string; rfd?: string }
+
+// The first cell of a notes sheet in an exported file.
+const CX_SHEET_HEADER = 'Cross-ex notes';
+const RFD_SHEET_HEADER = 'Reason for decision';
+
+function notesFromSheet(aoa: string[][]): { kind: keyof FlowNotes; text: string } | null {
+  const head = (aoa[0] ?? []).map((c) => c.trim());
+  if (head.slice(1).some(Boolean)) return null;
+  const lines = aoa.slice(1).map((r) => r[0] ?? '');
+  if (head[0] === CX_SHEET_HEADER) return { kind: 'cx', text: serializeCx(pastedToBullets(lines.join('\n'))) };
+  if (head[0] === RFD_SHEET_HEADER) return { kind: 'rfd', text: lines.join('\n').replace(/\s+$/, '') };
+  return null;
+}
+
+/** One past the last row holding anything, across every sheet. */
+function lastRow(sheets: { cells: Record<string, string> }[]): number {
+  let max = 0;
+  for (const sh of sheets) {
+    for (const k of Object.keys(sh.cells ?? {})) {
+      const r = Number(k.split('-')[0]);
+      if (Number.isFinite(r) && r + 1 > max) max = r + 1;
+    }
+  }
+  return max;
+}
+
 // ── Cell extraction (algorithmic path) ────────────────────────────────────────
 function buildCells(aoa: string[][], headerRowIdx: number, map: Map<number, number>): Record<string, string> {
   const cells: Record<string, string> = {};
   const dataRows = aoa.slice(headerRowIdx + 1);
   dataRows.forEach((srcRow, ri) => {
-    if (ri >= NUM_ROWS) return;
+    // The grid grows (up to MAX_ROWS); this used to stop at the default 60,
+    // silently dropping the rest of a long flow.
+    if (ri >= MAX_ROWS) return;
     map.forEach((tgtCi, srcCi) => {
       const v = String(srcRow[srcCi] ?? '').replace(/\r\n/g, '\n').trim();
       if (!v) return;
@@ -138,7 +170,7 @@ function buildCells(aoa: string[][], headerRowIdx: number, map: Map<number, numb
 function rowsToCells(rows: string[][]): Record<string, string> {
   const cells: Record<string, string> = {};
   rows.forEach((row, ri) => {
-    if (ri >= NUM_ROWS) return;
+    if (ri >= MAX_ROWS) return;
     row.forEach((v, ci) => {
       const val = String(v ?? '').replace(/\r\n/g, '\n').trim();
       if (val) cells[`${ri}-${ci}`] = val;
@@ -148,7 +180,7 @@ function rowsToCells(rows: string[][]): Record<string, string> {
 }
 
 // ── Main entry ────────────────────────────────────────────────────────────────
-export async function importFlowFromXlsx(base64: string): Promise<StoredFlowData> {
+export async function importFlowFromXlsx(base64: string): Promise<{ data: StoredFlowData; notes: FlowNotes }> {
   const wb = XLSX.read(base64, { type: 'base64' });
   if (!wb.SheetNames.length) throw new Error('The spreadsheet has no sheets.');
 
@@ -156,10 +188,15 @@ export async function importFlowFromXlsx(base64: string): Promise<StoredFlowData
   const needsAI: { name: string; grid: string[][] }[] = [];
   const eventVotes: Record<FlowEvent, number> = { policy: 0, pf: 0 };
 
+  const notes: FlowNotes = {};
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
     const aoa = (XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: true, defval: '' }) as unknown[][])
       .map((row) => (row ?? []).map((c) => String(c ?? '')));
+
+    // The notes sheets this app exports come back as notes, not flow tabs.
+    const note = notesFromSheet(aoa);
+    if (note) { notes[note.kind] = note.text; continue; }
 
     // Empty sheet → keep an empty placeholder so sheet structure is preserved.
     if (!aoa.some((row) => row.some((c) => c.trim()))) {
@@ -229,7 +266,9 @@ export async function importFlowFromXlsx(base64: string): Promise<StoredFlowData
 
   const data = makeDefaultData(event, 'stock-issues', 'pro-first');
   data.sheets = parsed.map((p) => ({ id: crypto.randomUUID(), name: p.name.slice(0, 40), cells: p.cells }));
-  return data;
+  // Grow the grid to fit whatever was imported.
+  data.numRows = Math.min(MAX_ROWS, Math.max(data.numRows ?? NUM_ROWS, lastRow(data.sheets) + 10));
+  return { data, notes };
 }
 
 /**
@@ -245,17 +284,34 @@ export async function importFlowFromXlsx(base64: string): Promise<StoredFlowData
  * so the two never drift. Used directly by Team Files' "add from your
  * flows" / auto-sync path, where the flow usually isn't open in an editor.
  */
-export function flowDataToXlsxBase64(data: StoredFlowData): string {
+export function flowDataToXlsxBase64(data: StoredFlowData, notes: FlowNotes = {}): string {
   const flowEvent: FlowEvent = data.event === 'pf' ? 'pf' : 'policy';
   const baseCols = flowEvent === 'policy'
     ? POLICY_COLS
     : (data.pfOrder === 'pro-first' ? PF_PRO_FIRST_COLS : PF_CON_FIRST_COLS);
   const cols = data.customColumns ?? baseCols;
   const wb = XLSX.utils.book_new();
+  // Excel rejects two sheets with the same name (case-insensitively), which
+  // two same-named tabs, or two long names that match once cut to Excel's 31
+  // characters, used to trigger — failing the whole export.
+  const used = new Set<string>();
+  const sheetName = (raw: string) => {
+    const base = (raw.replace(/[\\/:*?[\]]/g, '_').replace(/^'+|'+$/g, '').trim() || 'Sheet').slice(0, 31);
+    let name = base;
+    for (let n = 2; used.has(name.toLowerCase()); n++) {
+      const suffix = ` (${n})`;
+      name = base.slice(0, 31 - suffix.length) + suffix;
+    }
+    used.add(name.toLowerCase());
+    return name;
+  };
+  // Every row the flow has, not just the default 60 — a grown flow's later
+  // rows used to be left out of the file.
+  const rows = Math.max(data.numRows ?? NUM_ROWS, lastRow(data.sheets));
 
   for (const sheet of data.sheets) {
     const aoa: string[][] = [cols];
-    for (let ri = 0; ri < NUM_ROWS; ri++) {
+    for (let ri = 0; ri < rows; ri++) {
       const row = cols.map((_, ci) => htmlToText(sheet.cells[`${ri}-${ci}`] ?? ''));
       if (row.some((v) => v.trim() !== '')) aoa.push(row);
     }
@@ -263,17 +319,30 @@ export function flowDataToXlsxBase64(data: StoredFlowData): string {
     ws['!cols'] = cols.map((_, ci) => ({
       wch: Math.min(60, Math.max(12, ...aoa.map((row) => (row[ci] ?? '').length))),
     }));
-    const safeName = sheet.name.replace(/[\\/:*?[\]]/g, '_').slice(0, 31);
-    XLSX.utils.book_append_sheet(wb, ws, safeName);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName(sheet.name));
+  }
+
+  // The notes ride along as their own sheets, one line per row, under a
+  // header the importer recognizes so they come back as notes.
+  const cxLines = parseCx(notes.cx ?? '').filter((b) => b.text.trim()).map((b) => (b.level ? '    ◦ ' : '• ') + b.text);
+  if (cxLines.length) {
+    const ws = XLSX.utils.aoa_to_sheet([[CX_SHEET_HEADER], ...cxLines.map((l) => [l])]);
+    ws['!cols'] = [{ wch: 90 }];
+    XLSX.utils.book_append_sheet(wb, ws, sheetName('CX notes'));
+  }
+  if ((notes.rfd ?? '').trim()) {
+    const ws = XLSX.utils.aoa_to_sheet([[RFD_SHEET_HEADER], ...notes.rfd!.split('\n').map((l) => [l])]);
+    ws['!cols'] = [{ wch: 90 }];
+    XLSX.utils.book_append_sheet(wb, ws, sheetName('RFD'));
   }
 
   return XLSX.write(wb, { bookType: 'xlsx', type: 'base64' }) as string;
 }
 
-export async function importFlowFile(handle: string): Promise<{ name: string; data: StoredFlowData }> {
+export async function importFlowFile(handle: string): Promise<{ name: string; data: StoredFlowData; notes: FlowNotes }> {
   const res = await readFileBytes(handle);
   if (!res.ok || !res.base64) throw new Error(res.error || 'Could not read the file.');
-  const data = await importFlowFromXlsx(res.base64);
+  const { data, notes } = await importFlowFromXlsx(res.base64);
   const name = fileNameOf(handle).replace(/\.xlsx$/i, '');
-  return { name, data };
+  return { name, data, notes };
 }

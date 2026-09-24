@@ -176,9 +176,11 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     const failed: string[] = [];
     for (const h of handles) {
       try {
-        const { name, data } = await importFlowFile(h);
+        const { name, data, notes } = await importFlowFile(h);
         const id = crypto.randomUUID();
         await writeKey(`flow_data_${id}`, data);
+        if (notes.cx) await writeKey(`flow_cx_${id}`, notes.cx);
+        if (notes.rfd) await writeKey(`flow_rfd_${id}`, notes.rfd);
         added.push({ id, name, event: 'policy', createdAt: new Date().toISOString() });
       } catch (e: any) {
         failed.push(e?.message || 'Could not read that spreadsheet.');
@@ -220,6 +222,7 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     // Everything else keyed by the flow goes with it, or it sits in the
     // browser's storage forever with nothing able to reach it.
     await writeKey(`flow_cx_${flow.id}`, null);
+    await writeKey(`flow_rfd_${flow.id}`, null);
     await writeKey(`analyze_round_${flow.id}`, null);
     // A flow someone else owns is only removed from YOUR list — deleting it for
     // everyone in the room is not yours to do.
@@ -241,10 +244,12 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     const data = await readKey<any>(`flow_data_${flow.id}`);
     const id = crypto.randomUUID();
     await writeKey(`flow_data_${id}`, data ?? null);
-    // The cross-ex notes are part of the flow too; a copy without them looks
-    // like the notes were lost.
-    const cx = await readKey<string>(`flow_cx_${flow.id}`);
-    if (typeof cx === 'string' && cx) await writeKey(`flow_cx_${id}`, cx);
+    // The notes (cross-ex, RFD) are part of the flow too; a copy without them
+    // looks like they were lost.
+    for (const note of ['cx', 'rfd'] as const) {
+      const text = await readKey<string>(`flow_${note}_${flow.id}`);
+      if (typeof text === 'string' && text) await writeKey(`flow_${note}_${id}`, text);
+    }
     const now = new Date().toISOString();
     const meta: FlowMeta = {
       id,

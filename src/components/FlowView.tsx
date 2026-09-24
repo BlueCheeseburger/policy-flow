@@ -2,7 +2,8 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import * as Y from 'yjs';
 import { useApp, FlowMeta } from '../store/appStore';
 import SharePanel from './SharePanel';
-import CrossExPanel from './CrossExPanel';
+import NotesDrawer, { type NotesTab } from './NotesDrawer';
+import { useLiveNote } from '../hooks/useLiveNote';
 import { createFlowSync, FlowSyncHandle, RemoteCursor, PresenceUser, FlowSyncStatus } from '../lib/flowSync';
 import { isShortcutDisabled, matchesShortcut } from '../lib/shortcutPrefs';
 import {
@@ -350,12 +351,13 @@ export default function FlowView() {
   const cmPausedRef = useRef(cmPaused);
   useEffect(() => { cmPausedRef.current = cmPaused; }, [cmPaused]);
 
-  // Cross-ex doc (a bullet outline beside the grid). cxRef mirrors cxText for
-  // code that runs outside a render — seeding the live doc, snapshots.
-  const [cxText, setCxText] = useState('');
-  const cxRef = useRef('');
-  const cxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [cxOpen, setCxOpen] = useState(() => localStorage.getItem('pf-cx-open') === '1');
+  // Notes drawer beside the grid: the cross-ex outline or the RFD, or closed.
+  // Remembered across flows; the old CX-only flag still opens it on CX.
+  const [notesTab, setNotesTab] = useState<NotesTab | null>(() => {
+    const v = localStorage.getItem('pf-notes-drawer');
+    if (v === 'cx' || v === 'rfd') return v;
+    return localStorage.getItem('pf-cx-open') === '1' ? 'cx' : null;
+  });
 
   // Default side colors, straight from Settings. These used to be read from
   // two standalone localStorage keys that nothing in this app ever wrote — a
@@ -456,6 +458,9 @@ export default function FlowView() {
   const [syncStatus, setSyncStatus] = useState<FlowSyncStatus>('CONNECTING');
   const syncRef = useRef<FlowSyncHandle | null>(null);
   const liveRef = useRef(false);                          // mirror for callbacks
+  // The flow's two notes (see hooks/useLiveNote.ts).
+  const cx = useLiveNote('cx', flowId, syncRef, liveRef, liveReady);
+  const rfd = useLiveNote('rfd', flowId, syncRef, liveRef, liveReady);
   const applyingRemote = useRef(false);                   // guard structural echo
 
   // ── Refs ──────────────────────────────────────────────────────────────────
@@ -939,7 +944,7 @@ export default function FlowView() {
       try {
         // seedDoc wants every layout field present; a payload built before a
         // column color was ever set can be missing one.
-        seedDoc(seed, { ...payload, columnColors: payload.columnColors ?? [], cx: cxRef.current }, cellToHtml);
+        seedDoc(seed, { ...payload, columnColors: payload.columnColors ?? [], cx: cx.ref.current, rfd: rfd.ref.current }, cellToHtml);
         await cloudSaveSnapshot(flowId, flowMeta?.name ?? 'Flow', u8ToB64(Y.encodeStateAsUpdate(seed)));
       } catch { /* offline or over the size cap — the local copy is unaffected */ }
       finally { seed.destroy(); }
@@ -1081,7 +1086,8 @@ export default function FlowView() {
       variant: s.variant, pfOrder: s.pfOrder, sheets, numRows: s.numRows,
       columnWidths: [...s.columnWidths], customColumns: s.customColumns ? [...s.customColumns] : null,
       columnColors: [...s.columnColors], fontSize: s.fontSize, zoom: s.zoom,
-      cx: cxRef.current,
+      cx: cx.ref.current,
+      rfd: rfd.ref.current,
     };
   }
 
@@ -1247,63 +1253,16 @@ export default function FlowView() {
     return () => { window.history.replaceState(null, '', '/'); };
   }, [flowId, flowMeta?.shareToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Cross-ex doc ─────────────────────────────────────────────────────────────
-  // Saved on its own key rather than inside the flow's data: it isn't part of
-  // the grid's undo history, and keeping it out means an undo on the grid can
-  // never roll back a CX note. In a live room it's the doc's `cx` Y.Text, so
-  // partners see each other's notes and it rides along in the cloud snapshot.
-  useEffect(() => {
-    if (!flowId) return;
-    cxRef.current = ''; setCxText('');
-    let cancelled = false;
-    void readKey(`flow_cx_${flowId}`).then((v) => {
-      if (cancelled || typeof v !== 'string') return;
-      // The live doc already spoke for this flow — it wins over the local copy.
-      const live = syncRef.current?.doc.getText('cx').toString();
-      if (live) return;
-      cxRef.current = v; setCxText(v);
-      const yt = syncRef.current?.doc.getText('cx');
-      if (yt && liveRef.current) setYText(yt, v, LOCAL_ORIGIN);
-    });
-    return () => { cancelled = true; };
-  }, [flowId]);
-
-  function saveCxLocal(text: string) {
-    if (!flowId) return;
-    if (cxSaveTimer.current) clearTimeout(cxSaveTimer.current);
-    const id = flowId;
-    cxSaveTimer.current = setTimeout(() => { void writeKey(`flow_cx_${id}`, text); }, 400);
-  }
-
-  function updateCx(next: string) {
-    if (next === cxRef.current) return;
-    cxRef.current = next; setCxText(next);
-    saveCxLocal(next);
-    const yt = liveRef.current ? syncRef.current?.doc.getText('cx') : null;
-    if (yt) setYText(yt, next, LOCAL_ORIGIN);
-  }
-
-  useEffect(() => {
-    const handle = syncRef.current;
-    if (!liveReady || !handle) return;
-    const yt = handle.doc.getText('cx');
-    // Adopt the room's notes; if the room has none yet, contribute ours.
-    const shared = yt.toString();
-    if (!shared && cxRef.current) setYText(yt, cxRef.current, LOCAL_ORIGIN);
-    else if (shared !== cxRef.current) { cxRef.current = shared; setCxText(shared); saveCxLocal(shared); }
-    const onCx = (_e: unknown, tr: Y.Transaction) => {
-      if (tr.origin === LOCAL_ORIGIN) return;
-      const v = yt.toString();
-      if (v === cxRef.current) return;
-      cxRef.current = v; setCxText(v); saveCxLocal(v);
-    };
-    yt.observe(onCx);
-    return () => yt.unobserve(onCx);
-  }, [liveReady]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function toggleCx(open = !cxOpen) {
-    setCxOpen(open);
-    try { localStorage.setItem('pf-cx-open', open ? '1' : '0'); } catch { /* private mode */ }
+  // ── Notes drawer ─────────────────────────────────────────────────────────────
+  // A toolbar button opens its tab; pressing the one already showing closes it.
+  function toggleNotes(tab: NotesTab | null) {
+    const next = tab === notesTab ? null : tab;
+    setNotesTab(next);
+    if (next !== 'cx') syncRef.current?.setActiveCell(null, null);
+    try {
+      localStorage.setItem('pf-notes-drawer', next ?? '');
+      localStorage.removeItem('pf-cx-open');
+    } catch { /* private mode */ }
   }
 
   // ── CardMirror ─────────────────────────────────────────────────────────────
@@ -3105,8 +3064,8 @@ export default function FlowView() {
     return flowDataToXlsxBase64({
       event: flowEvent,
       variant, pfOrder, customColumns, columnWidths, columnColors, fontSize, zoom,
-      sheets: allSheets,
-    });
+      sheets: allSheets, numRows,
+    }, { cx: cx.ref.current, rfd: rfd.ref.current });
   }
 
   // A page can't choose where a file lands, so export is a download. Warroom's
@@ -3289,8 +3248,11 @@ export default function FlowView() {
 
         {/* Find */}
         <ToolBtn onClick={() => { setFindOpen(true); setTimeout(() => findInputRef.current?.focus(), 0); }} active={findOpen} title="Find (⌘F)"><IcoFind /></ToolBtn>
-        <ToolBtn onClick={() => toggleCx()} active={cxOpen} title={cxOpen ? 'Hide cross-ex notes' : 'Cross-ex notes'}>
+        <ToolBtn onClick={() => toggleNotes('cx')} active={notesTab === 'cx'} title={notesTab === 'cx' ? 'Hide cross-ex notes' : 'Cross-ex notes'}>
           <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.02em' }}>CX</span>
+        </ToolBtn>
+        <ToolBtn onClick={() => toggleNotes('rfd')} active={notesTab === 'rfd'} title={notesTab === 'rfd' ? 'Hide RFD notes' : 'RFD notes (reason for decision)'}>
+          <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.02em' }}>RFD</span>
         </ToolBtn>
 
         {/* Draw arrow */}
@@ -3798,11 +3760,15 @@ export default function FlowView() {
         </div>
       </div>
       </div>
-      {cxOpen && (
-        <CrossExPanel
-          value={cxText}
-          onChange={updateCx}
-          onClose={() => { syncRef.current?.setActiveCell(null, null); toggleCx(false); }}
+      {notesTab && (
+        <NotesDrawer
+          tab={notesTab}
+          onTab={(t) => toggleNotes(t)}
+          onClose={() => toggleNotes(null)}
+          cx={cx.text}
+          onCx={cx.update}
+          rfd={rfd.text}
+          onRfd={rfd.update}
           live={liveReady && syncStatus === 'SUBSCRIBED' ? 'live' : live ? 'connecting' : 'off'}
           peers={remoteCursors.map((c) => ({
             color: c.user.color,
