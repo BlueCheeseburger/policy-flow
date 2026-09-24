@@ -1,7 +1,7 @@
 {
   "id": "policy-flow",
   "name": "Policy Flow",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Send taglines or whole blocks to Policy Flow, and jump back from a right-click in the flow.",
   "author": "Policy Flow",
   "apiVersion": 1,

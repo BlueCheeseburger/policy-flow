@@ -59,15 +59,34 @@ export default function App() {
   // header on the way to some other page.
   useEffect(() => {
     if (!booted) return;
+    // `#/flow/<id>` is what FlowView writes into the address bar for a flow
+    // with no share link yet. Reopen it on reload instead of landing on Home
+    // with a stale URL, but only if this browser actually has that flow.
+    const own = window.location.hash.match(/^#\/flow\/([0-9a-f-]{36})$/i);
+    if (own) {
+      if (flowsIndex.some((f) => f.id === own[1])) setView({ kind: 'flow', flowId: own[1] });
+      else history.replaceState(null, '', window.location.pathname);
+      return;
+    }
     const m = window.location.hash.match(/^#\/join\/([A-Za-z0-9_-]+)$/);
     if (!m) return;
     const token = m[1];
-    // Clear it immediately so a reload (or a screenshot of the address bar)
-    // doesn't keep re-joining, and so the token isn't left sitting in history.
-    history.replaceState(null, '', window.location.pathname);
+    // Your own shared flow: its link is recorded locally, so open it straight
+    // away — no round trip, and it works offline (a reload with no network
+    // used to fail the join and strand you on Home).
+    const mine = flowsIndex.find((f) => f.shareToken === token);
+    if (mine) { setView({ kind: 'flow', flowId: mine.id }); return; }
+    // The link stays in the address bar until the join settles. Clearing it up
+    // front meant a reload while the server was answering landed on Home with
+    // the link gone. Re-joining is harmless (the grant already exists), and on
+    // success FlowView writes this same link back as the flow's address anyway.
     (async () => {
       const res = await joinFlow(token);
-      if (!res.ok) { setJoinError(res.error); return; }
+      if (!res.ok) {
+        history.replaceState(null, '', window.location.pathname);
+        setJoinError(res.error);
+        return;
+      }
       const existing = flowsIndex.find((f) => f.id === res.data.id);
       if (!existing) {
         const next = [...flowsIndex, {

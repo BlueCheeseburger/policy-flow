@@ -687,7 +687,7 @@ export default function FlowView() {
   useEffect(() => {
     if (!flowId) return;
     const now = new Date().toISOString();
-    const next = flowsIndex.map((f) => (f.id === flowId ? { ...f, viewedAt: now } : f));
+    const next = useApp.getState().flowsIndex.map((f) => (f.id === flowId ? { ...f, viewedAt: now } : f));
     setFlowsIndex(next);
     void writeKey('flows_index', next);
   }, [flowId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -767,6 +767,22 @@ export default function FlowView() {
         if (drawModeRef.current) cancelDrawMode();
         else if (selectionRef.current) clearSelection();
         else if (findOpen) closeFind();
+        return;
+      }
+      // Typing in a text field that isn't a grid cell — the cross-ex notes,
+      // the find box, a rename field — owns its own keys. ⌘Z there used to
+      // undo the GRID (and block the field's own undo), so fixing a typo in
+      // your CX notes quietly rolled back the flow. Find still opens from
+      // anywhere; nothing else here applies.
+      const t = e.target as HTMLElement | null;
+      const inOtherField = !!t && !t.closest('.flow-cell') &&
+        (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+      if (inOtherField) {
+        if (matchesShortcut(e, 'find-page')) {
+          e.preventDefault();
+          setFindOpen(true);
+          setTimeout(() => findInputRef.current?.focus(), 0);
+        }
         return;
       }
       // ── With a group of cells selected, the group is what the keyboard acts
@@ -875,7 +891,10 @@ export default function FlowView() {
     // Drives the home screen's default "last modified" sort. Cheap enough to
     // do on every persist — flowsIndex is a small list, not the flow's data.
     const now = new Date().toISOString();
-    const nextIndex = flowsIndex.map((f) => (f.id === flowId ? { ...f, updatedAt: now } : f));
+    // Fresh from the store, never this render's copy: persist() often runs from
+    // a timer armed renders ago, and writing that stale list back would erase
+    // whatever changed since (a new share token, the cloud flag, a rename).
+    const nextIndex = useApp.getState().flowsIndex.map((f) => (f.id === flowId ? { ...f, updatedAt: now } : f));
     setFlowsIndex(nextIndex);
     void writeKey('flows_index', nextIndex);
   }
@@ -902,6 +921,11 @@ export default function FlowView() {
     if (cloudPushTimer.current) clearTimeout(cloudPushTimer.current);
     cloudPushTimer.current = setTimeout(async () => {
       cloudPushTimer.current = null;
+      // Re-check at fire time, not just when scheduled: a save armed in the
+      // second before live sync connected would otherwise overwrite the
+      // room's snapshot with this browser's older local copy — dropping every
+      // partner edit since — once the live doc was already in charge of it.
+      if (liveRef.current) return;
       const seed = new Y.Doc();
       try {
         // seedDoc wants every layout field present; a payload built before a
@@ -931,6 +955,12 @@ export default function FlowView() {
       meta.set('customColumns', data.customColumns ?? null);
       meta.set('columnWidths', data.columnWidths);
       meta.set('columnColors', data.columnColors ?? []);
+      // Tab order. The array below only ever appends, so without this a
+      // reordered or duplicated tab snapped back on reload and partners saw
+      // a different order (see docToData).
+      const order = data.sheets.map((sh) => sh.id);
+      const prevOrder = meta.get('sheetOrder');
+      if (!Array.isArray(prevOrder) || prevOrder.join('|') !== order.join('|')) meta.set('sheetOrder', order);
 
       const arr = sheetsArr(doc);
       const haveIds = new Set<string>();
@@ -1102,6 +1132,9 @@ export default function FlowView() {
       if (cancelled) { handle.destroy(); return; }
       syncRef.current = handle;
       liveRef.current = true;
+      // The live doc owns the cloud snapshot from here; drop any local-copy
+      // push that was armed before it connected.
+      if (cloudPushTimer.current) { clearTimeout(cloudPushTimer.current); cloudPushTimer.current = null; }
       // If the doc already has content (snapshot or a peer), adopt it. Otherwise
       // we're the first writer — seed it from what we already have on screen.
       if (!docToData(handle.doc)) seedDoc(handle.doc, currentDataForDoc(), cellToHtml);
@@ -1501,6 +1534,9 @@ export default function FlowView() {
     if (!token) { setLiveStarting(false); return { ok: false, error: 'Only the person who made this flow can share it.' }; }
     updateFlowMeta({ live: true, cloud: true, shareToken: token });
     setLive(true); // the lifecycle effect picks it up
+    // Every flow is already live, so setLive(true) is usually a no-op and the
+    // lifecycle effect (which clears this) never re-runs.
+    setLiveStarting(false);
     return { ok: true, shareToken: token };
   }
 
@@ -2854,7 +2890,7 @@ export default function FlowView() {
       : sheets.filter((s) => /^off\b/i.test(s.name)).map((s) => s.name);
     if (names.length === 0) return;
     const note = names.join(', ');
-    const next = flowsIndex.map((f) => f.id === flowId ? { ...f, notes: note } : f);
+    const next = useApp.getState().flowsIndex.map((f) => f.id === flowId ? { ...f, notes: note } : f);
     setFlowsIndex(next);
     writeKey('flows_index', next);
   }
@@ -2959,7 +2995,7 @@ export default function FlowView() {
   // ── Flow meta (name/event) ────────────────────────────────────────────────
 
   function updateFlowMeta(updates: Partial<FlowMeta>) {
-    const newIndex = flowsIndex.map((f) => f.id === flowId ? { ...f, ...updates } : f);
+    const newIndex = useApp.getState().flowsIndex.map((f) => f.id === flowId ? { ...f, ...updates } : f);
     setFlowsIndex(newIndex);
     writeKey('flows_index', newIndex);
   }

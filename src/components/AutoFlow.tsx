@@ -876,7 +876,10 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
           event: 'policy',
           createdAt: new Date().toISOString(),
         };
-        const newIndex = [...flowsIndex, meta];
+        // Read the list fresh: this run has been waiting on the model for a
+        // while, and the flowsIndex it started with may be stale by now (the
+        // cloud merge, a "last viewed" stamp), which this write would erase.
+        const newIndex = [...useApp.getState().flowsIndex, meta];
         setFlowsIndex(newIndex);
         await writeKey('flows_index', newIndex);
       }

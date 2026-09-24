@@ -7,7 +7,8 @@
 // per-cell Y.Text so concurrent edits inside the grid merge cleanly.
 //
 //   doc.getMap('meta')              event, variant, pfOrder, fontSize, zoom,
-//                                   customColumns, columnWidths, columnColors
+//                                   customColumns, columnWidths, columnColors,
+//                                   sheetOrder (tab ids, in display order)
 //   doc.getText('cx')               the cross-ex outline (lib/crossEx.ts)
 //   doc.getArray('sheets')          one Y.Map per sheet:
 //       { id, name, cells: Y.Map<cellKey, Y.Text>, arrows: Y.Array<arrow> }
@@ -113,6 +114,7 @@ export function seedDoc(doc: Y.Doc, data: FlowDocData, cellToHtml: (v: string) =
     meta.set('customColumns', data.customColumns);
     meta.set('columnWidths', data.columnWidths);
     meta.set('columnColors', data.columnColors);
+    meta.set('sheetOrder', data.sheets.map((sh) => sh.id));
     if (data.cx) doc.getText('cx').insert(0, data.cx);
 
     const sheets = sheetsArr(doc);
@@ -162,7 +164,17 @@ export function docToData(doc: Y.Doc): FlowDocData | null {
       byId.set(id, entry);
     }
   }
-  const outSheets = Array.from(byId.values());
+  // Tab order lives in meta, not in the array: a Y.Array element can't be
+  // moved once integrated, and new tabs are appended wherever they were
+  // inserted locally. Ids the order doesn't know (a doc written before
+  // sheetOrder existed, or a tab a partner just added) keep their array
+  // position after the ordered ones.
+  const order: unknown = meta.get('sheetOrder');
+  const rank = new Map<string, number>(Array.isArray(order) ? order.map((id, i) => [String(id), i] as [string, number]) : []);
+  const outSheets = Array.from(byId.values())
+    .map((sh, i) => ({ sh, i }))
+    .sort((a, b) => (rank.get(a.sh.id) ?? rank.size + a.i) - (rank.get(b.sh.id) ?? rank.size + b.i))
+    .map(({ sh }) => sh);
   return {
     event: meta.get('event'),
     variant: meta.get('variant') ?? 'stock-issues',

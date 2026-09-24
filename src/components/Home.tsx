@@ -127,8 +127,11 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     (async () => {
       const res = await listFlows();
       if (!res.ok) return; // offline: the local list is still correct
-      const local = new Map(flowsIndex.map((f) => [f.id, f]));
-      const next: FlowMeta[] = [...flowsIndex];
+      // Fresh after the await, and copied rather than mutated in place: the
+      // list may have changed while listFlows was in flight.
+      const current = useApp.getState().flowsIndex.map((f) => ({ ...f }));
+      const local = new Map(current.map((f) => [f.id, f]));
+      const next: FlowMeta[] = current;
       for (const row of res.data) {
         const existing = local.get(row.id);
         if (existing) {
@@ -182,7 +185,7 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
       }
     }
     if (added.length) {
-      const next = [...flowsIndex, ...added];
+      const next = [...useApp.getState().flowsIndex, ...added];
       setFlowsIndex(next);
       await writeKey('flows_index', next);
     }
@@ -214,6 +217,10 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     setFlowsIndex(next);
     await writeKey('flows_index', next);
     await writeKey(`flow_data_${flow.id}`, null);
+    // Everything else keyed by the flow goes with it, or it sits in the
+    // browser's storage forever with nothing able to reach it.
+    await writeKey(`flow_cx_${flow.id}`, null);
+    await writeKey(`analyze_round_${flow.id}`, null);
     // A flow someone else owns is only removed from YOUR list — deleting it for
     // everyone in the room is not yours to do.
     //
@@ -234,6 +241,10 @@ export default function Home({ onAutoFlow }: { onAutoFlow: () => void }) {
     const data = await readKey<any>(`flow_data_${flow.id}`);
     const id = crypto.randomUUID();
     await writeKey(`flow_data_${id}`, data ?? null);
+    // The cross-ex notes are part of the flow too; a copy without them looks
+    // like the notes were lost.
+    const cx = await readKey<string>(`flow_cx_${flow.id}`);
+    if (typeof cx === 'string' && cx) await writeKey(`flow_cx_${id}`, cx);
     const now = new Date().toISOString();
     const meta: FlowMeta = {
       id,

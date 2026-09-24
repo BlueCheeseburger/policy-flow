@@ -181,6 +181,10 @@ async function explainSilence(token: string): Promise<string> {
     if (res.status === 401) return 'That pairing code no longer works. Make a new one in Policy Flow → Settings → CardMirror.';
     const body = await res.json().catch(() => ({}));
     if (body?.paused) return 'Policy Flow is paused. Click “CardMirror: Paused” in the flow to resume.';
+    // A flow tab is open but none answered: usually a browser tab that was
+    // asleep in the background, or the tab that took sends was just closed.
+    // Clicking into the flow wakes it and makes it the one that answers.
+    if (body?.present) return `Policy Flow is open${body.flowName ? ` (${body.flowName})` : ''} but didn't answer. Click into the flow, then try again.`;
   } catch { /* offline — fall through to the generic hint */ }
   return `No flow is open. Open one at ${APP_URL} and click into the column you want.`;
 }
@@ -197,7 +201,7 @@ function adoptApi(a: Api) {
 
 async function sendToFlow(a: Api) {
   adoptApi(a);
-  if (isPaused()) { a.showToast('Sending to Policy Flow is paused. Run “Policy Flow: Resume sending” to turn it back on.'); return; }
+  if (isPaused()) { a.showToast('Sending to Policy Flow is paused. Run “Policy Flow: Pause or resume sending” to turn it back on.'); return; }
   const token = pairingToken();
   if (!token) {
     a.showToast('Add your pairing code first. Get one in Policy Flow → Settings → CardMirror.');

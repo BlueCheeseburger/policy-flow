@@ -5,6 +5,24 @@ this is a running app with no release cuts.
 
 ## 2026-09-23
 
+- Fixed: reloading a flow that hadn't been shared yet dropped you on Home.
+- Fixed: reloading right after opening a share link (or on a slow
+  connection) dropped you on Home with the link gone. Your own shared flows
+  now reopen straight from the link, even offline.
+- Fixed: ⌘Z while typing in the cross-ex notes, the find box, or a rename
+  field undid the grid instead.
+- Fixed: tab order wasn't saved in live flows, so reordered or duplicated
+  tabs jumped back on reload and partners saw a different order.
+- Fixed: typing in a shared flow in the first moment after opening it could
+  overwrite the room's saved copy with this browser's older one.
+- Fixed: a save could write back an old copy of the flow list, erasing a new
+  share link or the flag that lets deleting a flow remove its cloud copy.
+  Auto Flow and the startup sync had the same problem.
+- Fixed: duplicating a flow left its cross-ex notes behind, and deleting one
+  left its notes and saved round analysis in browser storage.
+- CardMirror plugin 0.1.3: when a flow is open but doesn't answer, the
+  message says so instead of "No flow is open", and the paused message names
+  the right command.
 - CardMirror plugin 0.1.1: a **Policy Flow: Settings and pairing code**
   command opens the plugin's own settings window, with the pairing code, the
   titles toggle, and "What it does" / "Setting it up" / "Good to know"
