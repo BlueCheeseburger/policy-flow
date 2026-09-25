@@ -75,6 +75,9 @@ unpairs completely.
 **Good to know**
 
 - Cards go into the flow tab you last clicked in, if you have several open.
+- `~` is only the default. To use another key, open CardMirror's keyboard
+  shortcut settings and rebind **Policy Flow: Send to flow**. The settings
+  and pause commands have no key until you give them one there.
 - Anyone sharing a live flow with you sees the rows you send, but they can't
   see or send through your pairing.
 - On CardMirror versions older than 1.12.0-bcb.2, press `~` once after
