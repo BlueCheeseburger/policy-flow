@@ -11,6 +11,8 @@ this is a running app with no release cuts.
   instead of doing nothing. A slow reconnect shows "Connecting…".
 - Rows from CardMirror keep a tag's underlined words, once CardMirror sends
   them (needs a CardMirror update).
+- CardMirror plugin 0.1.4 ships the connection messages and underline
+  support, and its help says how to change the send key.
 
 ## 2026-09-24
 
