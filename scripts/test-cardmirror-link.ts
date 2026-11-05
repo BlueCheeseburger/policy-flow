@@ -121,5 +121,21 @@ console.log('\n[6] tokens and topics');
   check('topic is namespaced', cmTopic(h) === `pf:cm:${h}`);
 }
 
+console.log('\n[underline] underlined words in a tag reach the cell');
+{
+  const src = 'cmsrc1.abc';
+  const [card] = itemsToCards([{ kind: 'tag', text: '  Medicare for All saves lives', source: src, underline: [[2, 18], [25, 30]] }], { includeHeadings: true });
+  check('ranges shift with the trimmed text', JSON.stringify(card.underline) === '[[0,16],[23,28]]', JSON.stringify(card.underline));
+  const html = sanitizeCellHtml(cardCellHtml(card));
+  check('underlined stretches render as <u>', html.includes('<u>Medicare for All</u>') && html.includes('<u>lives</u>'), html);
+  check('source link survives alongside', html.includes(`data-cm="${src}"`), html);
+  const parsed = parseCardsMsg({ id: 'x', cards: [{ kind: 'card', text: 'abc', underline: [[1, 99], ['a', 2], [0, 0], [0, 2]] }] });
+  check('wire ranges are clipped, merged, junk dropped', JSON.stringify(parsed?.cards[0].underline) === '[[0,3]]', JSON.stringify(parsed?.cards[0].underline));
+  const plain = itemsToCards([{ kind: 'tag', text: 'no marks', source: src }], { includeHeadings: true })[0];
+  check('older CardMirror builds still send plain text', !plain.underline && !cardCellHtml(plain).includes('<u>'));
+  const esc = cardCellHtml({ kind: 'card', text: 'a<b>c', underline: [[1, 4]] });
+  check('text inside an underline is still escaped', esc.includes('<u>&lt;b&gt;</u>'), esc);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

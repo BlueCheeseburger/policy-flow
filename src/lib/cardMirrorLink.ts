@@ -50,6 +50,8 @@ export interface CmCard {
   cite?: string;
   /** CardMirror source token — what right-click hands back to jump to it. */
   source?: string;
+  /** Underlined stretches of `text`, as [start, end) character offsets. */
+  underline?: [number, number][];
 }
 
 export interface CmCardsMsg { id: string; cards: CmCard[] }
@@ -74,10 +76,36 @@ export interface ExtractedItemLike {
   kind: 'pocket' | 'hat' | 'block' | 'tag' | 'analytic' | 'undertag' | 'cite';
   text: string;
   source: string;
+  /** Underlined stretches of `text`, [start, end). Sent by CardMirror builds that support it. */
+  underline?: readonly (readonly [number, number])[];
 }
 
 const MAX_TEXT = 2000;
 const MAX_CITE = 400;
+
+/**
+ * Clean a list of underline ranges against a text of length `len`: drop
+ * anything malformed or empty, clip to the text, sort, and merge overlaps.
+ * `shift` moves every range left (for text that was trimmed at the front).
+ */
+export function cleanUnderline(raw: unknown, len: number, shift = 0): [number, number][] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: [number, number][] = [];
+  for (const r of raw.slice(0, 500)) {
+    if (!Array.isArray(r) || r.length !== 2) continue;
+    const a = Math.max(0, Math.floor(Number(r[0])) - shift);
+    const b = Math.min(len, Math.floor(Number(r[1])) - shift);
+    if (Number.isFinite(a) && Number.isFinite(b) && b > a) out.push([a, b]);
+  }
+  out.sort((x, y) => x[0] - y[0]);
+  const merged: [number, number][] = [];
+  for (const r of out) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push(r);
+  }
+  return merged.length ? merged : undefined;
+}
 
 /**
  * Turn CardMirror's flat extraction (document order) into flow rows.
@@ -93,16 +121,19 @@ export function itemsToCards(items: readonly ExtractedItemLike[], opts: { includ
   const out: CmCard[] = [];
   let current: CmCard | null = null;
   for (const it of items) {
-    const text = String(it.text ?? '').trim().slice(0, MAX_TEXT);
+    const raw = String(it.text ?? '');
+    const text = raw.trim().slice(0, MAX_TEXT);
     if (!text) continue;
     const source = isCmSource(it.source) ? it.source : undefined;
+    const lead = raw.length - raw.trimStart().length;
+    const underline = cleanUnderline(it.underline, text.length, lead);
     switch (it.kind) {
       case 'pocket': case 'hat': case 'block':
         current = null;
         if (opts.includeHeadings) out.push({ kind: 'heading', text, ...(source ? { source } : {}) });
         break;
       case 'tag': case 'analytic':
-        current = { kind: 'card', text, ...(source ? { source } : {}) };
+        current = { kind: 'card', text, ...(source ? { source } : {}), ...(underline ? { underline } : {}) };
         out.push(current);
         break;
       case 'cite':
@@ -143,6 +174,18 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** Escaped text with its underlined stretches wrapped in <u>. */
+function underlinedHtml(text: string, ranges: [number, number][] | undefined): string {
+  if (!ranges?.length) return esc(text);
+  let html = '';
+  let at = 0;
+  for (const [a, b] of ranges) {
+    html += esc(text.slice(at, a)) + `<u>${esc(text.slice(a, b))}</u>`;
+    at = b;
+  }
+  return html + esc(text.slice(at));
+}
+
 /**
  * The HTML a sent card becomes in its cell. The tagline sits in a
  * `<span data-cm>` carrying the source token, which is what right-click reads
@@ -152,7 +195,7 @@ function esc(s: string): string {
  */
 export function cardCellHtml(card: CmCard): string {
   const src = card.source && isCmSource(card.source) ? ` data-cm="${esc(card.source)}"` : '';
-  const main = `<span${src}>${esc(card.text)}</span>`;
+  const main = `<span${src}>${underlinedHtml(card.text, card.kind === 'heading' ? undefined : card.underline)}</span>`;
   if (card.kind === 'heading') return `<u>${main}</u>`;
   return card.cite ? `${main} — ${esc(card.cite)}` : main;
 }
@@ -164,9 +207,12 @@ export function parseCardsMsg(raw: unknown): CmCardsMsg | null {
   const cards: CmCard[] = [];
   for (const c of m.cards as any[]) {
     if (!c || (c.kind !== 'heading' && c.kind !== 'card') || typeof c.text !== 'string' || !c.text.trim()) return null;
+    const text = c.text.slice(0, MAX_TEXT);
+    const underline = cleanUnderline(c.underline, text.length);
     cards.push({
       kind: c.kind,
-      text: c.text.slice(0, MAX_TEXT),
+      text,
+      ...(underline ? { underline } : {}),
       ...(typeof c.cite === 'string' && c.cite.trim() ? { cite: c.cite.slice(0, MAX_CITE) } : {}),
       ...(isCmSource(c.source) ? { source: c.source } : {}),
     });

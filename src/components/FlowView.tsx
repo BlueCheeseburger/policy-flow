@@ -799,6 +799,21 @@ export default function FlowView() {
         }
         return;
       }
+      // ⌘A: in a cell, everything in that cell; anywhere else, the flow
+      // itself — never the toolbar, tabs and notes around it.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
+        const cell = t?.closest('.flow-cell');
+        const target = cell ?? gridContentRef.current;
+        if (target) {
+          e.preventDefault();
+          const range = document.createRange();
+          range.selectNodeContents(target);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+        return;
+      }
       // ── With a group of cells selected, the group is what the keyboard acts
       // on. These run before the single-cell equivalents below, and before the
       // per-cell handler ever sees the key (⌘-click never focuses a cell).

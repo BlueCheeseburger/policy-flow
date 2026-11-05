@@ -115,6 +115,9 @@ async function connect(): Promise<Conn | null> {
     });
     channel.on('broadcast', { event: CM_JUMP_EVENT }, ({ payload }) => { void handleJump(channel, payload); });
     const ready = new Promise<boolean>((resolve) => {
+      // Offline, the socket just keeps retrying and never reports a status,
+      // which used to leave a send hanging with no message at all.
+      setTimeout(() => resolve(false), 6000);
       channel.subscribe((status) => {
         if (status === 'SUBSCRIBED') resolve(true);
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') resolve(false);
@@ -220,8 +223,15 @@ async function sendToFlow(a: Api) {
   const cards = itemsToCards(ext.items, { includeHeadings: includeHeadings() });
   if (!cards.length) { a.showToast('No tags or analytics there to send.'); return; }
 
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    a.showToast("You're offline, so nothing was sent to Policy Flow.");
+    return;
+  }
+  // Reconnecting can take a few seconds; say so rather than look dead.
+  const slow = setTimeout(() => a.showToast('Connecting to Policy Flow…'), 800);
   const c = await joinedConn();
-  if (!c) { a.showToast("Couldn't reach Policy Flow's server. Check your connection."); return; }
+  clearTimeout(slow);
+  if (!c) { a.showToast("Couldn't reach Policy Flow, so nothing was sent. Check your connection and try again."); return; }
 
   let placed = 0;
   let where = '';

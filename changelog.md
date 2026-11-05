@@ -3,6 +3,15 @@
 What's changed in this fork, newest first. Grouped by day, not by version —
 this is a running app with no release cuts.
 
+## 2026-11-05
+
+- ⌘A in a cell selects just that cell; anywhere else in the flow it selects
+  the grid, not the toolbar and notes around it.
+- Sending from CardMirror while offline or unable to connect now says so,
+  instead of doing nothing. A slow reconnect shows "Connecting…".
+- Rows from CardMirror keep a tag's underlined words, once CardMirror sends
+  them (needs a CardMirror update).
+
 ## 2026-09-24
 
 - Notes drawer: the CX button and a new RFD button open one drawer beside the
