@@ -16,6 +16,8 @@ this is a running app with no release cuts.
   pocket opens (or makes) the tab it names. Needs plugin 0.1.5 for hats and
   pockets; older plugins' headings still come in as blocks.
 - Double underline: ⌘⇧U, and a button next to Underline.
+- CardMirror plugin 0.1.5 sends each heading's level (pocket, hat or
+  block), so sent sections get hat styling and pockets open their tab.
 - Short cites in the team's format ("Rather 26 — Dan Rather. …") are read
   correctly; they used to come out empty.
 
