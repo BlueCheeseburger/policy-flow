@@ -7,8 +7,9 @@ import JSZip from 'jszip';
 import { resolveFile, fileNameOf } from './files';
 import { resolveHeadingStyles, defaultHeadingLevels, extractDocText } from '../lib/docxStyles';
 import { extractFlowCardsFromXml, type ExtractedFlowCard } from '../lib/docxFlowCards';
+import { extractOutline, resolveNoteStyles, type OutlineItem } from '../lib/docOutline';
 
-interface DocParts { documentXml: string; headingLevels: Map<string, number> }
+interface DocParts { documentXml: string; headingLevels: Map<string, number>; stylesXml: string }
 
 // Unzipping the same doc twice in one run is common (Auto Flow reads tags, then
 // re-reads for bodies if summaries are on), so parsed parts are memoized per
@@ -37,7 +38,7 @@ async function loadParts(handle: string): Promise<DocParts> {
   let headingLevels = resolveHeadingStyles(stylesXml);
   if (headingLevels.size === 0) headingLevels = defaultHeadingLevels();
 
-  const parts = { documentXml, headingLevels };
+  const parts = { documentXml, headingLevels, stylesXml };
   partsCache.set(handle, parts);
   return parts;
 }
@@ -46,6 +47,12 @@ async function loadParts(handle: string): Promise<DocParts> {
 export async function extractBlocks(handle: string): Promise<{ cards: ExtractedFlowCard[] }> {
   const { documentXml, headingLevels } = await loadParts(handle);
   return { cards: extractFlowCardsFromXml(documentXml, headingLevels) };
+}
+
+/** Auto Flow's parse mode: every heading, tag and analytic, in order. */
+export async function extractDocOutline(handle: string): Promise<OutlineItem[]> {
+  const { documentXml, headingLevels, stylesXml } = await loadParts(handle);
+  return extractOutline(documentXml, headingLevels, resolveNoteStyles(stylesXml));
 }
 
 /** The same, with card bodies — only for the opt-in AI summary step. */

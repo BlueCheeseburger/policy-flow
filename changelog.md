@@ -3,6 +3,22 @@
 What's changed in this fork, newest first. Grouped by day, not by version —
 this is a running app with no release cuts.
 
+## 2026-11-07
+
+- Auto Flow can parse instead of using AI: a switch in the Auto Flow
+  dialog, off every time it opens. Each pocket becomes a tab (or, when the
+  pocket is just a speech label, the hat or block that names the position;
+  a 1NC's "OFF" blocks are named by their first tagline). Every tagline and
+  analytic gets a row, in document order.
+- Hats are double underlined with a blank row above and below; blocks are
+  single underlined; rows under a hat are indented 8px, and 8px more under a
+  block. The same rules apply to sections sent from CardMirror, where a
+  pocket opens (or makes) the tab it names. Needs plugin 0.1.5 for hats and
+  pockets; older plugins' headings still come in as blocks.
+- Double underline: ⌘⇧U, and a button next to Underline.
+- Short cites in the team's format ("Rather 26 — Dan Rather. …") are read
+  correctly; they used to come out empty.
+
 ## 2026-11-05
 
 - ⌘A in a cell selects just that cell; anywhere else in the flow it selects

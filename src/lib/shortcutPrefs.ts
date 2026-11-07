@@ -23,6 +23,7 @@ export const DEFAULT_BINDINGS: Record<string, KeyBinding> = {
   'flow-bold':         { mod: true, shift: false, alt: false, key: 'b' },
   'flow-italic':       { mod: true, shift: false, alt: false, key: 'i' },
   'flow-underline':    { mod: true, shift: false, alt: false, key: 'u' },
+  'flow-double-underline': { mod: true, shift: true, alt: false, key: 'u' },
   'flow-strike':       { mod: true, shift: true,  alt: false, key: 'x' },
   'flow-highlight':    { mod: true, shift: true,  alt: false, key: 'h' },
   'flow-undo':         { mod: true, shift: false, alt: false, key: 'z' },

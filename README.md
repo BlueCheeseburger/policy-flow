@@ -10,10 +10,10 @@ no account, no sign-up, nothing to install.
    undo, zoom, a notes drawer beside the grid (bullet-point cross-ex notes
    and an RFD), and keyboard shortcuts. Unlike a shared Google Sheet, every flow is a live room: anyone
    with the link edits it at once with colored cursors, no account for anyone.
-2. **Auto Flow.** Drop a Verbatim-format `.docx` speech doc and it parses the
-   tag/cite hierarchy straight into flow tabs and columns for free, no API key
-   needed; adding one lets a model sort cards into the right tab/column and
-   write short summaries instead.
+2. **Auto Flow.** Drop a Verbatim-format `.docx` speech doc and AI sorts its
+   cards into the right tab and column. Or switch on parsing: no AI, each
+   pocket becomes a tab, every tagline and analytic gets a row, hats are
+   double underlined, blocks underlined, and what's under them indented.
 3. **CardMirror plugin.** Press `~` on a tag in CardMirror to drop it (with
    its cite) into the column you're flowing, or on a hat or block to send
    every card under it at once. Right-click any row that came in that way to
@@ -38,8 +38,11 @@ copying and pasting.
   tag lands in the flow column you last clicked into, with its short cite
   (`Tag — Smith 24`).
 - **Sends whole sections.** Press `~` on a pocket, hat, or block and every
-  card under it comes over in order, as one run of rows. Section titles come
-  in underlined; you can turn that off in the plugin's settings. Cards never
+  card under it comes over in order, as one run of rows. Hats come in double
+  underlined with a blank row on each side, blocks underlined, and the cards
+  under them slightly indented. A pocket opens the tab it names (or makes it)
+  and its cards go there. You can turn section titles off in the plugin's
+  settings. Cards never
   get threaded between rows you've already written. If there isn't room
   below your cursor, the run starts further down. ⌘Z removes the whole send
   at once.

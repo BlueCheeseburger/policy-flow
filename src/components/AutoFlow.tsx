@@ -9,18 +9,21 @@ import { escapeHtml } from '../lib/cellHtml';
 import { useDragActive } from '../hooks/useDragActive';
 import { readAutoFlowTagStyle } from '../lib/autoFlowTagStyle';
 import { pruneUnnamedEmptySheets } from '../lib/flowSheetNaming';
-import { parseAutoFlow, sheetAliasKey } from '../lib/autoFlowParse';
+import { sheetAliasKey } from '../lib/autoFlowParse';
+import { parseStructuredFlow } from '../lib/autoFlowStructured';
+import { layoutRows, headingHtml, type RowKind } from '../lib/flowRowStyle';
+import type { OutlineItem } from '../lib/docOutline';
 import { findColumnIndex, firstEmptyRow, inferEventFromPockets, inferVariantFromHats } from '../lib/autoFlowPlacement';
 import { summaryColumnFor } from '../lib/flowTabSummary';
 import { readKey, writeKey } from '../platform/storage';
 import { openFiles, resolveDroppedFiles, fileNameOf } from '../platform/files';
-import { extractBlocks } from '../platform/docx';
+import { extractBlocks, extractDocOutline } from '../platform/docx';
 import { autoFlowClassify, autoFlowSummarize, onAutoFlowProgress } from '../platform/aiFeatures';
 import {
   StoredFlowData, SheetData, PolicyVariant, PFOrder,
   POLICY_COLS, PF_PRO_FIRST_COLS, PF_CON_FIRST_COLS,
   SHEETS_STOCK_ISSUES, SHEETS_ADVANTAGE, SHEETS_PF,
-  NUM_ROWS, makeDefaultData,
+  NUM_ROWS, MAX_ROWS, makeDefaultData,
 } from './FlowView';
 
 // Auto Flow: upload one or many speech docs, and Warroom AI sorts their tags into
@@ -31,7 +34,6 @@ import {
 // question-pause-resume pattern this file copies (runClassify/answerQuestion
 // mirror its runEmphasize/answerQuestion).
 
-const ENGINE_KEY = 'warroom-autoflow-engine';
 
 type Step = 'upload' | 'extracting' | 'target' | 'classifying' | 'review' | 'writing' | 'live' | 'done';
 
@@ -39,6 +41,8 @@ interface DocResult {
   fileName: string;
   path: string;
   cards: ExtractedFlowCard[];
+  /** Every heading, tag and analytic in order — what parse mode places. */
+  outline: OutlineItem[];
   error?: string;
 }
 
@@ -101,6 +105,12 @@ interface Placement {
   // AI-generated short summary (only when summary mode is on). When present the
   // write step writes THIS instead of tag+cite, and marks the cell as an AI cell.
   summary?: string;
+  /**
+   * Set only by parse mode: what kind of row this is. Its presence switches the
+   * write step to laying rows out in document order, with hats, blocks and
+   * indents styled by lib/flowRowStyle.ts.
+   */
+  rowKind?: Exclude<RowKind, 'pocket'>;
   removed: boolean;
 }
 
@@ -176,7 +186,8 @@ function buildCellHtml(tag: string, cite: string, summary?: string): string {
   if (!style.bold) t = `<span style="font-weight: normal">${t}</span>`;
   // The cite is never bold — it's the line that has to read as subordinate to
   // the tag above it, and with a bold baseline it no longer does so for free.
-  return useSummary ? t : `${t}<br><span style="font-weight: normal">${escapeHtml(cite)}</span>`;
+  // No cite (an analytic, a label tag): no empty second line under it.
+  return useSummary || !cite.trim() ? t : `${t}<br><span style="font-weight: normal">${escapeHtml(cite)}</span>`;
 }
 
 // The stages of a run, shown as a checklist while it works so the wait is
@@ -297,13 +308,8 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
   // closing — this is a working preference, not a per-run decision, and having
   // to re-pick it every time is exactly the sort of friction that makes people
   // stop using the faster path.
-  const [engine, setEngineState] = useState<'ai' | 'parser'>(() => {
-    try { return localStorage.getItem(ENGINE_KEY) === 'parser' ? 'parser' : 'ai'; } catch { return 'ai'; }
-  });
-  function setEngine(next: 'ai' | 'parser') {
-    setEngineState(next);
-    try { localStorage.setItem(ENGINE_KEY, next); } catch {}
-  }
+  // Off every time the dialog opens, on purpose: parsing is the opt-in.
+  const [engine, setEngine] = useState<'ai' | 'parser'>('ai');
   const [summarizing, setSummarizing] = useState(false);
 
   // Classify / question-pause-resume (mirrors CardCutter's runEmphasize/answerQuestion)
@@ -360,16 +366,18 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       const fileName = fileNameOf(p);
       try {
         const { cards } = await extractBlocks(p);
+        const outline = await extractDocOutline(p);
         // Preload each tagline's word count now — it's cheap, derived, and
         // can't go stale, so computing it here beats making the user wait for
         // it later during the summary pass.
         for (const c of cards) counts.set(`${fileName} ${c.tag.trim().toLowerCase()}`, tagWordCount(c.tag));
         results.push({
-          fileName, path: p, cards,
-          error: cards.length === 0 ? 'No cards found in this doc.' : undefined,
+          fileName, path: p, cards, outline,
+          error: cards.length === 0 && !outline.some((o) => o.kind === 'tag' || o.kind === 'analytic')
+            ? 'No cards found in this doc.' : undefined,
         });
       } catch (e: any) {
-        results.push({ fileName, path: p, cards: [], error: e?.message || 'Could not read this file.' });
+        results.push({ fileName, path: p, cards: [], outline: [], error: e?.message || 'Could not read this file.' });
       }
     }
     wordCounts.current = counts;
@@ -491,7 +499,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
    * writing, and the write step itself are all unchanged downstream.
    */
   async function runParser(
-    docsIn: { fileName: string; cards: ExtractedFlowCard[] }[],
+    docsIn: { fileName: string; outline: OutlineItem[] }[],
     columns: string[],
     existingSheets: string[],
     event: 'policy' | 'pf',
@@ -501,7 +509,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
     setError('');
     setProgress(null);
     try {
-      const res = parseAutoFlow({ docs: docsIn, columns, existingSheets, event });
+      const res = parseStructuredFlow({ docs: docsIn, columns, existingSheets, event });
       if (res.placements.length === 0) {
         throw new Error(
           'The parser couldn\'t place a single card — none of these docs had a recognisable speech label ' +
@@ -509,7 +517,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         );
       }
       const list: Placement[] = res.placements.map((p) => ({ ...p, id: crypto.randomUUID(), removed: false }));
-      const cardsIn = docsIn.reduce((n, d) => n + d.cards.length, 0);
+      const cardsIn = docsIn.reduce((n, d) => n + d.outline.filter((o) => o.kind === 'tag' || o.kind === 'analytic').length, 0);
       setClassifyStats({ cardsIn, placed: list.length, dropped: res.skipped.length, batches: 0 });
       const notes = { unresolved: res.unresolved, skipped: res.skipped.length, docs: res.unresolvedDocs };
       setParserNotes(notes);
@@ -525,7 +533,9 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
 
   async function confirmTarget() {
     setError('');
-    const usableDocs = docs.filter((d) => d.cards.length > 0);
+    const usableDocs = docs.filter((d) => (engine === 'parser'
+      ? d.outline.some((o) => o.kind === 'tag' || o.kind === 'analytic')
+      : d.cards.length > 0));
     if (usableDocs.length === 0) {
       setError('None of the uploaded docs had any cards to sort.');
       return;
@@ -542,7 +552,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       const target: TargetCtx = { kind: 'existing', flowId: selectedFlowId };
       setTargetCtx(target);
       if (engine === 'parser') {
-        await runParser(docsForClassify, existingColumns, existingSheetNames, data.event, target);
+        await runParser(usableDocs, existingColumns, existingSheetNames, data.event, target);
         return;
       }
       await runClassify(clarifications, { docs: docsForClassify, existingColumns, existingSheetNames, event: data.event, variantLabel, target });
@@ -553,7 +563,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       const target: TargetCtx = { kind: 'new', event: newEvent, variant: newVariant, pfOrder: newPfOrder };
       setTargetCtx(target);
       if (engine === 'parser') {
-        await runParser(docsForClassify, existingColumns, existingSheetNames, newEvent, target);
+        await runParser(usableDocs, existingColumns, existingSheetNames, newEvent, target);
         return;
       }
       await runClassify(clarifications, { docs: docsForClassify, existingColumns, existingSheetNames, event: newEvent, variantLabel, target });
@@ -690,7 +700,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         }
         return idx;
       };
-      const writeCard = (sheetIdx: number, ri: number, ci: number, p: Placement) => {
+      const writeCard = (sheetIdx: number, ri: number, ci: number, p: Placement, laidHtml?: string) => {
         const cellKey = `${ri}-${ci}`;
         // Stamp the tab as Auto Flow's work. Its presence is what makes the tab
         // eligible for an AI hover summary at all, and its value picks which
@@ -702,8 +712,9 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         }
         // Recorded in placement order so a live run can replay the same writes,
         // one at a time, into an initially-empty copy of these sheets.
-        writeLog.push({ sheetIdx, cellKey, html: buildCellHtml(p.tag, p.cite, p.summary) });
-        sheets[sheetIdx].cells[cellKey] = buildCellHtml(p.tag, p.cite, p.summary);
+        const html = laidHtml ?? buildCellHtml(p.tag, p.cite, p.summary);
+        writeLog.push({ sheetIdx, cellKey, html });
+        sheets[sheetIdx].cells[cellKey] = html;
         if (p.summary && p.summary.trim()) {
           const ai = sheets[sheetIdx].aiCells ?? [];
           ai.push(cellKey);
@@ -757,9 +768,50 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         else skipped.push({ tag: planCard.tag, sheetName: sheets[0].name, column: columns[0] ?? '1AC', reason: 'first column is full' });
       }
 
+      // Parse mode: rows in document order, appended after whatever each column
+      // already holds, laid out by the shared row rules — hats double
+      // underlined with a blank row either side, blocks single underlined,
+      // everything under them indented. A run is one doc's consecutive rows
+      // for one tab and column; a hat or block's indent carries through it.
+      const structured = accepted.some((p) => p.rowKind);
+      let deepestRow = 0;
+      if (structured) {
+        const rows = accepted.filter((p) => !p.isPlan);
+        const rowHtml = (p: Placement) => (p.rowKind === 'hat' || p.rowKind === 'block')
+          ? headingHtml(p.rowKind, p.tag)
+          : buildCellHtml(p.tag, p.cite);
+        for (let i = 0; i < rows.length;) {
+          const first = rows[i];
+          let j = i + 1;
+          while (j < rows.length && rows[j].sheetName === first.sheetName && rows[j].column === first.column && rows[j].fileName === first.fileName) j++;
+          const run = rows.slice(i, j);
+          i = j;
+          const sheetIdx = ensureSheet(first.sheetName);
+          const colIdx = findColumnIndex(columns, first.column);
+          if (colIdx === -1) {
+            for (const p of run) skipped.push({ tag: p.tag, sheetName: p.sheetName, column: p.column, reason: 'column not found' });
+            continue;
+          }
+          const cells = sheets[sheetIdx].cells;
+          let start = 0;
+          for (let r = MAX_ROWS - 1; r >= 0; r--) if ((cells[`${r}-${colIdx}`] ?? '').trim()) { start = r + 1; break; }
+          const laid = layoutRows(run.map((p) => ({ kind: p.rowKind ?? 'card', html: rowHtml(p) })), start > 0);
+          let k = 0;
+          laid.forEach((html, off) => {
+            if (html === null) return;
+            const p = run[k++];
+            const ri = start + off;
+            if (ri >= MAX_ROWS) { skipped.push({ tag: p.tag, sheetName: p.sheetName, column: p.column, reason: 'column is full' }); return; }
+            writeCard(sheetIdx, ri, colIdx, p, html);
+            deepestRow = Math.max(deepestRow, ri + 1);
+          });
+        }
+        if (deepestRow + 10 > (data.numRows ?? NUM_ROWS)) data = { ...data, numRows: Math.min(MAX_ROWS, deepestRow + 10) };
+      }
+
       // Pass 1 — every card that does NOT answer another card (originals). Placed
       // first so their positions are known when Pass 2 aligns answers to them.
-      for (const p of accepted) {
+      for (const p of structured ? [] : accepted) {
         if (p.isPlan || p.respondsTo) continue;
         const sheetIdx = ensureSheet(p.sheetName);
         const colIdx = findColumnIndex(columns, p.column);
@@ -782,7 +834,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       // whichever remaining cards already have their target placed, so multi-
       // level chains still resolve regardless of list order; only genuinely
       // unresolvable cards (dangling/cyclic respondsTo) fall through unaligned.
-      let remaining = accepted.filter((p) => !p.isPlan && !!p.respondsTo);
+      let remaining = structured ? [] : accepted.filter((p) => !p.isPlan && !!p.respondsTo);
       while (remaining.length > 0) {
         const stillRemaining: Placement[] = [];
         let progressed = false;
@@ -1087,51 +1139,41 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                 </div>
               )}
 
-              {/* Which engine sorts the cards. Lives here rather than in Settings
-                  because it is a per-document decision — a clean Verbatim doc
-                  parses perfectly, a doc that hats everything "OFF" needs the
-                  model — and the choice sticks between runs. */}
-              <div className="rounded-sm border border-line p-3">
-                <div className="text-xs font-medium text-ink/80 mb-0.5">How should the cards be sorted?</div>
-                <p className="text-[11px] text-ink/45 mb-2.5">
-                  Your choice is remembered for next time.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {([
-                    { id: 'parser' as const, title: 'Read the document', sub: 'Instant · no API call',
-                      body: 'Uses the doc\u2019s own headings \u2014 the speech gives the column, the position gives the tab. No length limit, however big the file.' },
-                    { id: 'ai' as const, title: 'AI sorting', sub: 'Slower · costs a call',
-                      body: 'Reads the taglines. Needed when a doc labels every off\u2011case block the same thing, so the headings don\u2019t say what the positions are.' },
-                  ]).map((opt) => {
-                    const on = engine === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        title={opt.title}
-                        onClick={() => setEngine(opt.id)}
-                        className={`text-left rounded-sm p-2.5 transition ${opt.id === 'ai' ? 'ai-glow-ring' : ''}`}
-                        style={{
-                          background: on ? 'var(--nav-active-bg)' : 'transparent',
-                          border: `1px solid ${on ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span className="shrink-0 rounded-full" style={{
-                            width: 10, height: 10,
-                            border: `2px solid ${on ? 'var(--accent)' : 'var(--border-med)'}`,
-                            background: on ? 'var(--accent)' : 'transparent',
-                            boxShadow: on ? 'inset 0 0 0 1.5px var(--bg-elevated)' : 'none',
-                          }} />
-                          <span className="text-xs font-medium text-ink/85">{opt.title}</span>
-                        </div>
-                        <div className="text-[10px] text-ink/40 mt-0.5 pl-[16px]">{opt.sub}</div>
-                        <p className="text-[11px] text-ink/50 mt-1.5 leading-relaxed">{opt.body}</p>
-                      </button>
-                    );
-                  })}
-                </div>
+              {/* Parse instead of AI. Off every time the dialog opens: AI
+                  sorting is the default, and parsing is the deliberate choice
+                  for a doc whose headings already say where everything goes. */}
+              <div className="flex items-start gap-3 rounded-sm border border-line p-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={engine === 'parser'}
+                  aria-label="Auto flow by parsing the document"
+                  onClick={() => setEngine((v) => (v === 'parser' ? 'ai' : 'parser'))}
+                  className="relative shrink-0 mt-0.5 transition"
+                  style={{
+                    width: 34, height: 19, borderRadius: 999,
+                    background: engine === 'parser' ? 'var(--accent)' : 'var(--bg-elevated)',
+                    border: '1px solid var(--border-med)',
+                  }}
+                >
+                  <span
+                    className="absolute rounded-full transition"
+                    style={{
+                      top: 1, left: engine === 'parser' ? 16 : 1,
+                      width: 15, height: 15,
+                      background: '#fff',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
+                    }}
+                  />
+                </button>
+                <button type="button" className="text-left flex-1 cursor-pointer" onClick={() => setEngine((v) => (v === 'parser' ? 'ai' : 'parser'))}>
+                  <div className="text-xs font-medium text-ink/80">Auto flow by parsing instead of AI</div>
+                  <div className="text-[11px] text-ink/45 mt-0.5 leading-snug">
+                    Reads the doc&rsquo;s own structure, no AI call. Each pocket becomes a tab, every tagline and
+                    analytic gets a row, hats are double underlined with a blank row around them, blocks are
+                    underlined, and everything under them is indented.
+                  </div>
+                </button>
               </div>
 
               {/* Opt-in AI summary mode. The ai-glow-ring marks it as an AI action

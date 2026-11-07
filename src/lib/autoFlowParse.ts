@@ -185,7 +185,7 @@ export function looksLikePlan(card: ParseCard, speech: string | null): boolean {
  */
 const SPEECH_MARKER = '(1AC|2AC|1NC|2NC|1NR|1AR|2NR|2AR)';
 
-function stripSpeechMarkers(s: string): string {
+export function stripSpeechMarkers(s: string): string {
   return String(s ?? '')
     .replace(new RegExp(`^\\s*${SPEECH_MARKER}\\s*[-—–:]{1,3}\\s*`, 'i'), '')
     .replace(new RegExp(`[-—–]{2,}\\s*${SPEECH_MARKER}\\s*$`, 'i'), '')
@@ -218,6 +218,23 @@ export function advantageName(s: string | null | undefined): string | null {
 
 /** A heading that is nothing but a speech name — never a legal tab name. */
 const BARE_SPEECH = new RegExp(`^\\s*${SPEECH_MARKER}\\s*$`, 'i');
+
+/**
+ * The tab a POCKET names, or null when it doesn't name one. A pocket is the
+ * position ("Stocks", "Econ Adv") in the way most of a team's own files are
+ * built, but in a camp or send file it's a speech or file label ("1NC",
+ * "NSU Single Payer 1AC v3.2", "Negative"), and that is never a tab.
+ */
+export function pocketTabName(pocket: string | null | undefined): string | null {
+  const raw = String(pocket ?? '').trim();
+  if (!raw) return null;
+  const adv = advantageName(raw);
+  if (adv) return adv;
+  if (detectSpeech(raw, '', 'policy')) return null; // names a speech, so it labels the file
+  const t = stripSpeechMarkers(raw);
+  if (!t || isGenericHeader(t) || BARE_SPEECH.test(t) || /^(negative|affirmative|neg|aff)$/i.test(t)) return null;
+  return t.slice(0, 60);
+}
 
 /**
  * The key two tab names are considered THE SAME under.

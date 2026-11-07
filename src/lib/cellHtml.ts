@@ -11,6 +11,9 @@
 // Lives apart from FlowView.tsx so it can be exercised by scripts/test-cell-paste.ts.
 
 import { CM_SOURCE_RE } from './cardMirrorLink';
+import { DOUBLE_UNDERLINE_STYLE } from './cellStyleTokens';
+
+export { DOUBLE_UNDERLINE_STYLE };
 
 // Highlighter color (amber) for ⌘⇧H. Cells force dark ink on any highlighted
 // span (see the .flow-cell rule in index.css) so it stays readable in dark mode.
@@ -33,8 +36,14 @@ const DROP_SUBTREE = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME
 // not just on the paste path) means cells pasted before that fix also come back
 // clean the next time they render.
 export const ALLOWED_STYLE_PROPS = new Set([
-  'font-weight', 'font-style', 'text-decoration', 'text-decoration-line', 'background-color', 'vertical-align',
+  'font-weight', 'font-style', 'text-decoration', 'text-decoration-line', 'text-decoration-style',
+  'background-color', 'vertical-align', 'padding-left',
 ]);
+
+// `padding-left` is how a row under a hat or block is indented (see
+// lib/flowRowStyle.ts). Only small whole-pixel values — anything else is
+// pasted layout, not an indent the app wrote.
+const PADDING_LEFT_RE = /^\d{1,2}px$/;
 
 // Paste is stricter still: `background-color` is dropped too. Word and Google
 // Docs stamp it on nearly every span with junk values (`transparent`, `white`),
@@ -42,7 +51,7 @@ export const ALLOWED_STYLE_PROPS = new Set([
 // that exists for our own ⌘⇧H highlight spans. Emphasis (bold / italic /
 // underline / strike / sub / sup) still survives; a highlight can be re-applied
 // in-cell with ⌘⇧H.
-const PASTE_DROPPED_PROPS = new Set(['background-color']);
+const PASTE_DROPPED_PROPS = new Set(['background-color', 'padding-left']);
 export const PASTE_STYLE_PROPS = new Set([...ALLOWED_STYLE_PROPS].filter((p) => !PASTE_DROPPED_PROPS.has(p)));
 
 export function escapeHtml(s: string): string {
@@ -65,6 +74,7 @@ function sanitizeStyle(style: string, props: Set<string>): string {
       if (!props.has(prop)) return false;
       // Reject anything that could fetch a resource or execute.
       if (/url\(|expression|javascript:|@import|[<>]/.test(val)) return false;
+      if (prop === 'padding-left' && !PADDING_LEFT_RE.test(val)) return false;
       return true;
     })
     .join('; ');
@@ -214,17 +224,19 @@ export function cleanPastedHtml(html: string, text: string): string {
 // explicit `font-weight: normal`, and every other emphasis works the usual way
 // round. `BASE_ON` is what the cell looks like with no markup at all.
 
-export type Emphasis = 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'highlight';
+export type Emphasis = 'bold' | 'italic' | 'underline' | 'doubleUnderline' | 'strikeThrough' | 'highlight';
 
 const BASE_ON: Record<Emphasis, boolean> = {
-  bold: true, italic: false, underline: false, strikeThrough: false, highlight: false,
+  bold: true, italic: false, underline: false, doubleUnderline: false, strikeThrough: false, highlight: false,
 };
+
 
 // Tags that turn an emphasis ON, and the style property that carries it either way.
 const EMPHASIS_TAGS: Record<Emphasis, Set<string>> = {
   bold: new Set(['B', 'STRONG']),
   italic: new Set(['I', 'EM']),
   underline: new Set(['U']),
+  doubleUnderline: new Set(),
   strikeThrough: new Set(['S', 'STRIKE', 'DEL']),
   highlight: new Set(),
 };
@@ -232,6 +244,7 @@ const EMPHASIS_PROPS: Record<Emphasis, string[]> = {
   bold: ['font-weight'],
   italic: ['font-style'],
   underline: ['text-decoration', 'text-decoration-line'],
+  doubleUnderline: ['text-decoration', 'text-decoration-style'],
   strikeThrough: ['text-decoration', 'text-decoration-line'],
   highlight: ['background-color'],
 };
@@ -242,7 +255,10 @@ function valueSaysOn(e: Emphasis, prop: string, raw: string): boolean | null {
   if (!v) return null;
   if (e === 'bold') return v === 'bolder' || v === 'bold' || (/^\d+$/.test(v) ? Number(v) >= 600 : false) ? true : (v === 'normal' || v === 'lighter' || /^\d+$/.test(v) ? false : null);
   if (e === 'italic') return v === 'italic' || v === 'oblique' ? true : (v === 'normal' ? false : null);
-  if (e === 'underline') return v.includes('underline') ? true : (v === 'none' ? false : null);
+  // A double underline is its own emphasis, not a plain one: ⌘U on a hat
+  // shouldn't read it as already underlined and strip it.
+  if (e === 'underline') return v.includes('double') ? null : v.includes('underline') ? true : (v === 'none' ? false : null);
+  if (e === 'doubleUnderline') return v.includes('double') ? true : (v === 'none' || v === 'solid' ? false : null);
   if (e === 'strikeThrough') return v.includes('line-through') ? true : (v === 'none' ? false : null);
   // highlight: any real color is on; transparent/none is off.
   if (prop !== 'background-color') return null;
@@ -335,6 +351,7 @@ const WRAPPER: Record<Emphasis, { on: string; off: string }> = {
   bold:          { on: '<b>',  off: '<span style="font-weight: normal">' },
   italic:        { on: '<i>',  off: '<span style="font-style: normal">' },
   underline:     { on: '<u>',  off: '<span style="text-decoration: none">' },
+  doubleUnderline: { on: `<span style="${DOUBLE_UNDERLINE_STYLE}">`, off: '<span style="text-decoration: none">' },
   strikeThrough: { on: '<s>',  off: '<span style="text-decoration: none">' },
   highlight:     { on: `<span style="background-color: ${HILITE}">`, off: '<span style="background-color: transparent">' },
 };

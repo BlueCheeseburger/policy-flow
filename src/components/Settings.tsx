@@ -598,6 +598,7 @@ const SHORTCUT_ROWS: { id: string; label: string }[] = [
   { id: 'flow-bold', label: 'Bold' },
   { id: 'flow-italic', label: 'Italic' },
   { id: 'flow-underline', label: 'Underline' },
+  { id: 'flow-double-underline', label: 'Double underline' },
   { id: 'flow-strike', label: 'Strikethrough' },
   { id: 'flow-highlight', label: 'Highlight' },
   { id: 'flow-undo', label: 'Undo' },

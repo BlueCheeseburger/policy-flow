@@ -15,6 +15,8 @@
 // could ever say, and why it kept reporting success while no card arrived (it
 // broadcast to `realtime:pf:user:…`, a topic nothing was subscribed to).
 
+import { DOUBLE_UNDERLINE_STYLE } from './cellStyleTokens';
+
 export const CM_CARDS_EVENT = 'pf-cards';
 export const CM_CARDS_ACK_EVENT = 'pf-cards-ack';
 export const CM_JUMP_EVENT = 'pf-jump';
@@ -45,6 +47,12 @@ export async function sha256Hex(raw: string): Promise<string> {
 export interface CmCard {
   /** `heading` = a pocket/hat/block title; `card` = a tag or analytic. */
   kind: 'heading' | 'card';
+  /**
+   * Which heading: a pocket names a flow tab, a hat is double underlined with
+   * a blank row either side, a block is single underlined. Absent from plugin
+   * builds before 0.1.5, which the flow treats as a block.
+   */
+  level?: 'pocket' | 'hat' | 'block';
   text: string;
   /** Short cite (author + date). Only on cards, and only when the card has one. */
   cite?: string;
@@ -130,7 +138,7 @@ export function itemsToCards(items: readonly ExtractedItemLike[], opts: { includ
     switch (it.kind) {
       case 'pocket': case 'hat': case 'block':
         current = null;
-        if (opts.includeHeadings) out.push({ kind: 'heading', text, ...(source ? { source } : {}) });
+        if (opts.includeHeadings) out.push({ kind: 'heading', level: it.kind, text, ...(source ? { source } : {}) });
         break;
       case 'tag': case 'analytic':
         current = { kind: 'card', text, ...(source ? { source } : {}), ...(underline ? { underline } : {}) };
@@ -196,7 +204,9 @@ function underlinedHtml(text: string, ranges: [number, number][] | undefined): s
 export function cardCellHtml(card: CmCard): string {
   const src = card.source && isCmSource(card.source) ? ` data-cm="${esc(card.source)}"` : '';
   const main = `<span${src}>${underlinedHtml(card.text, card.kind === 'heading' ? undefined : card.underline)}</span>`;
-  if (card.kind === 'heading') return `<u>${main}</u>`;
+  if (card.kind === 'heading') {
+    return card.level === 'hat' ? `<span style="${DOUBLE_UNDERLINE_STYLE}">${main}</span>` : `<u>${main}</u>`;
+  }
   return card.cite ? `${main} — ${esc(card.cite)}` : main;
 }
 
@@ -211,6 +221,7 @@ export function parseCardsMsg(raw: unknown): CmCardsMsg | null {
     const underline = cleanUnderline(c.underline, text.length);
     cards.push({
       kind: c.kind,
+      ...(c.kind === 'heading' && (c.level === 'pocket' || c.level === 'hat' || c.level === 'block') ? { level: c.level } : {}),
       text,
       ...(underline ? { underline } : {}),
       ...(typeof c.cite === 'string' && c.cite.trim() ? { cite: c.cite.slice(0, MAX_CITE) } : {}),

@@ -51,6 +51,12 @@ export function shortCite(full: string): string {
   // carries no author, so there is no short cite to make.
   if (/^<<.*>>$/.test(raw) || /FOR REFERENCE/i.test(raw)) return '';
 
+  // The team's own format: the short cite, an em dash, then the full cite —
+  // "Rather 26 — Dan Rather. February 5. …". Everything before the dash IS
+  // the short cite, exactly as the team wrote it.
+  const dashed = raw.match(/^(.{1,60}?)\s+[—–]\s+\S/);
+  if (dashed && /\d/.test(dashed[1]) && !/[[(,]/.test(dashed[1])) return dashed[1].trim();
+
   // Everything before the first bracket or comma is the short-cite head in both
   // dominant shapes. Whichever comes first wins.
   const cutAt = [raw.indexOf('['), raw.indexOf('('), raw.indexOf(',')]

@@ -11,7 +11,7 @@ import {
   u8ToB64, LOCAL_ORIGIN, REMOTE_ORIGIN, FlowDocData,
 } from '../lib/flowDoc';
 import {
-  HILITE, HILITE_RGB, cellToHtml, htmlToText, cleanPastedHtml, sanitizeCellHtml, matchRangesIn,
+  HILITE, HILITE_RGB, DOUBLE_UNDERLINE_STYLE, cellToHtml, htmlToText, cleanPastedHtml, sanitizeCellHtml, matchRangesIn,
   cellHasEmphasis, setCellEmphasis, Emphasis,
 } from '../lib/cellHtml';
 import {
@@ -19,6 +19,8 @@ import {
   clearCells, selectionKeys, isSelected as selHas, cellKey as selCellKey,
 } from '../lib/flowSelection';
 import { flushCellsIntoSheets } from '../lib/flowCellFlush';
+import { layoutRows, type FlowRow } from '../lib/flowRowStyle';
+import { pocketTabName, sheetAliasKey } from '../lib/autoFlowParse';
 import { mergeUndoStep, rebaseCell, rebaseArrows } from '../lib/undoMerge';
 import { flowDataToXlsxBase64 } from '../utils/flowImport';
 import { readKey, writeKey } from '../platform/storage';
@@ -384,7 +386,7 @@ export default function FlowView() {
   // and the second copy toggled off what the first had just switched on.
   const drawModeRef = useRef(false);
   // Which emphasis is on at the caret, for lighting up the toolbar buttons.
-  const [fmt, setFmt] = useState({ bold: false, italic: false, underline: false, strike: false, highlight: false });
+  const [fmt, setFmt] = useState({ bold: false, italic: false, underline: false, dunder: false, strike: false, highlight: false });
 
   // ── Multi-cell selection ──────────────────────────────────────────────────
   // ⌘-click builds a group of cells within ONE column (see lib/flowSelection.ts
@@ -836,8 +838,8 @@ export default function FlowView() {
           e.preventDefault(); clearSelectedCells(); return;
         }
         for (const [id, cmd] of [
-          ['flow-bold', 'bold'], ['flow-italic', 'italic'], ['flow-underline', 'underline'],
-          ['flow-strike', 'strikeThrough'], ['flow-highlight', 'highlight'],
+          ['flow-bold', 'bold'], ['flow-italic', 'italic'], ['flow-double-underline', 'doubleUnderline'],
+          ['flow-underline', 'underline'], ['flow-strike', 'strikeThrough'], ['flow-highlight', 'highlight'],
         ] as const) {
           if (matchesShortcut(e, id)) { e.preventDefault(); applyFormatToSelection(cmd); return; }
         }
@@ -1387,48 +1389,126 @@ export default function FlowView() {
     return () => { cancelled = true; clearInterval(id); window.removeEventListener('focus', check); };
   }, [identityId]);
 
-  // Put a batch of sent cards into the open sheet. Lands as one contiguous run
-  // in the focused column — starting at the focused row, or the first place
-  // below it with room for the whole batch — so a block's cards never get
-  // threaded through gaps between rows already written. Grows the grid when it
-  // runs off the bottom. One save, so one ⌘Z takes the whole batch back out.
+  // Put a batch of sent cards into the flow. Each run lands contiguously in
+  // the focused column — starting at the focused row, or the first place below
+  // it with room for the whole run — so a block's cards never get threaded
+  // through gaps between rows already written. Hats, blocks and indents follow
+  // lib/flowRowStyle.ts, the same rules Auto Flow's parse mode uses; a pocket
+  // in the send opens the tab it names (making it if needed) and what follows
+  // goes there, in the same column, after what's already in it. Grows the grid
+  // when it runs off the bottom. One save, so one ⌘Z takes the whole batch back.
   function applyCardMirrorCards(cards: CmCard[]): CmCardsResult {
-    const s = snap.current;
-    const sheet = s.sheets[s.activeSheetIdx];
-    if (!sheet || cellsOwnerId.current !== sheet.id) return { ok: false, error: 'bad-request' };
+    const s0 = snap.current;
+    const first = s0.sheets[s0.activeSheetIdx];
+    if (!first || cellsOwnerId.current !== first.id) return { ok: false, error: 'bad-request' };
     const [fr, fc] = (focusedCell.current ?? '0-0').split('-').map(Number);
     const ci = Math.max(0, Math.min(columns.length - 1, Number.isFinite(fc) ? fc : 0));
-    const hasText = (r: number) => !!htmlToText(cellToHtml(cellsRef.current[`${r}-${ci}`] ?? '')).trim();
-    let start = Math.max(0, Number.isFinite(fr) ? fr : 0);
-    for (;;) {
-      while (start < MAX_ROWS && hasText(start)) start++;
-      let clear = 0;
-      while (clear < cards.length && start + clear < MAX_ROWS && !hasText(start + clear)) clear++;
-      if (clear === cards.length) break;
-      if (start + clear >= MAX_ROWS) return { ok: false, error: 'grid-full' };
-      start += clear;
+
+    // Split at each pocket that names a tab. The run before the first one goes
+    // on the tab that's open.
+    const runs: { tab: string | null; cards: CmCard[] }[] = [{ tab: null, cards: [] }];
+    for (const c of cards) {
+      const tab = c.kind === 'heading' && c.level === 'pocket' ? pocketTabName(c.text) : null;
+      if (tab) runs.push({ tab, cards: [] });
+      else if (!(c.kind === 'heading' && c.level === 'pocket')) runs[runs.length - 1].cards.push(c);
     }
-    const rows = Math.max(s.numRows, start + cards.length);
-    cards.forEach((card, i) => {
-      const key = `${start + i}-${ci}`;
-      const html = sanitizeCellHtml(cardCellHtml(card));
-      cellsRef.current[key] = html;
-      const el = cellEls.current[key];
-      if (el) { el.innerHTML = html; el.dataset.init = '1'; }
-      pushLiveCell(key, html);
-      dirtyKeys.current.add(key);
-    });
-    if (rows > s.numRows) {
+
+    const toRows = (list: CmCard[]): FlowRow[] => list.map((c) => ({
+      kind: c.kind === 'heading' ? (c.level === 'hat' ? 'hat' : 'block') : 'card',
+      html: sanitizeCellHtml(cardCellHtml(c)),
+    }));
+
+    let placed = 0;
+    let lastSheet = first.name;
+    let maxRow = 0;
+    let lastRow = -1;
+    let switched = false;
+    for (const run of runs) {
+      if (!run.cards.length) continue;
+      if (run.tab) { openTabNamed(run.tab); switched = true; }
+      const sheet = snap.current.sheets[snap.current.activeSheetIdx];
+      lastSheet = sheet?.name ?? lastSheet;
+      const hasText = (r: number) => r >= 0 && !!htmlToText(cellToHtml(cellsRef.current[`${r}-${ci}`] ?? '')).trim();
+      const rows = toRows(run.cards);
+      // A pocket's tab takes its run after everything already in the column;
+      // the open tab takes it from the focused row down.
+      let start = 0;
+      if (run.tab) {
+        for (let r = MAX_ROWS - 1; r >= 0; r--) if (hasText(r)) { start = r + 1; break; }
+      } else {
+        start = Math.max(0, Number.isFinite(fr) ? fr : 0);
+      }
+      let laid = layoutRows(rows, hasText(start - 1));
+      for (;;) {
+        while (start < MAX_ROWS && hasText(start)) start++;
+        laid = layoutRows(rows, hasText(start - 1));
+        let clear = 0;
+        while (clear < laid.length && start + clear < MAX_ROWS && !hasText(start + clear)) clear++;
+        if (clear === laid.length) break;
+        if (start + clear >= MAX_ROWS) return { ok: false, error: 'grid-full' };
+        start += clear;
+      }
+      laid.forEach((html, i) => {
+        if (html === null) return;
+        const key = `${start + i}-${ci}`;
+        cellsRef.current[key] = html;
+        // After a tab switch the grid on screen is still the old tab's until
+        // the next render remounts it from cellsRef, so leave its DOM alone.
+        const el = switched ? null : cellEls.current[key];
+        if (el) { el.innerHTML = html; el.dataset.init = '1'; }
+        pushLiveCell(key, html);
+        dirtyKeys.current.add(key);
+        placed++;
+      });
+      lastRow = start + laid.length;
+      maxRow = Math.max(maxRow, lastRow);
+    }
+    if (!placed) return { ok: false, error: 'bad-request' };
+    const s = snap.current;
+    if (maxRow > s.numRows) {
       // A little headroom past the batch, so the next send has somewhere to go.
-      const grown = Math.min(MAX_ROWS, Math.max(rows, s.numRows) + 10);
+      const grown = Math.min(MAX_ROWS, maxRow + 10);
       setNumRows(grown);
       snap.current = { ...snap.current, numRows: grown };
     }
     scheduleSave();
-    const next = start + cards.length;
+    const next = lastRow;
     // After the render that mounts any new rows.
     setTimeout(() => { if (next < snap.current.numRows) focusCell(`${next}-${ci}`, 'start'); }, 30);
-    return { ok: true, placed: cards.length, flowName: flowMeta?.name ?? 'Flow', sheetName: sheet.name };
+    return { ok: true, placed, flowName: flowMeta?.name ?? 'Flow', sheetName: lastSheet };
+  }
+
+  /**
+   * Open the tab a sent pocket names — matched loosely, so "Midterms" finds
+   * "Midterms DA" — or add it at the end. Synchronous on the refs, like
+   * switchSheet, so the rows written next land on it.
+   */
+  function openTabNamed(name: string) {
+    rememberScroll();
+    let saved = flushAndGetSheets();
+    let idx = saved.findIndex((sh) => sheetAliasKey(sh.name) === sheetAliasKey(name));
+    if (idx === -1) {
+      saved = [...saved, { id: crypto.randomUUID(), name: name.slice(0, 40), cells: {} }];
+      idx = saved.length - 1;
+    }
+    if (idx === snap.current.activeSheetIdx) return;
+    const targetId = saved[idx].id;
+    const handle = syncRef.current;
+    const live = liveRef.current && handle ? findSheet(handle.doc, targetId) : null;
+    if (live) {
+      const cells: Record<string, string> = {};
+      sheetCells(live).forEach((t, k) => { const v = t.toString(); if (v) cells[k] = v; });
+      cellsRef.current = cells;
+    } else {
+      cellsRef.current = { ...(saved[idx].cells ?? {}) };
+    }
+    cellsOwnerId.current = targetId;
+    dirtyKeys.current.clear();
+    setSheets(saved);
+    setActiveSheetIdx(idx);
+    snap.current = { ...snap.current, sheets: saved, activeSheetIdx: idx };
+    setCellNonce((n) => n + 1);
+    persist({ sheets: saved });
   }
   const applyCardsRef = useRef(applyCardMirrorCards);
   applyCardsRef.current = applyCardMirrorCards;
@@ -1738,7 +1818,7 @@ export default function FlowView() {
   // Apply rich-text emphasis to the focused cell (toolbar buttons).
   // Buttons call this from onMouseDown(preventDefault) so the cell keeps focus
   // and its selection, letting execCommand act on the selected text.
-  function applyFormat(cmd: 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'highlight') {
+  function applyFormat(cmd: 'bold' | 'italic' | 'underline' | 'doubleUnderline' | 'strikeThrough' | 'highlight') {
     // A group selection takes precedence: it's the thing the user is pointing at,
     // and none of its cells is focused.
     if (applyFormatToSelection(cmd)) return;
@@ -1747,6 +1827,7 @@ export default function FlowView() {
     if (!key || !el) return;
     el.focus();
     if (cmd === 'highlight') toggleHighlight();
+    else if (cmd === 'doubleUnderline') toggleDoubleUnderline(el);
     else if (cmd === 'bold') toggleBold();
     else document.execCommand(cmd);
     noteCellEdit(key, el.innerHTML);
@@ -1774,18 +1855,18 @@ export default function FlowView() {
       const keys = selectionKeys(sel).filter((k) => htmlToText(cellToHtml(cellsRef.current[k] ?? '')).trim());
       const all = (e: Emphasis) => keys.length > 0 && keys.every((k) => cellHasEmphasis(cellToHtml(cellsRef.current[k] ?? ''), e));
       const next = {
-        bold: all('bold'), italic: all('italic'), underline: all('underline'),
+        bold: all('bold'), italic: all('italic'), underline: all('underline'), dunder: all('doubleUnderline'),
         strike: all('strikeThrough'), highlight: all('highlight'),
       };
       setFmt((f) => (f.bold === next.bold && f.italic === next.italic && f.underline === next.underline
-        && f.strike === next.strike && f.highlight === next.highlight) ? f : next);
+        && f.dunder === next.dunder && f.strike === next.strike && f.highlight === next.highlight) ? f : next);
       return;
     }
     const key = focusedCell.current;
     const el = key ? cellEls.current[key] : null;
     if (!el || document.activeElement !== el) {
-      setFmt((f) => (f.bold || f.italic || f.underline || f.strike || f.highlight)
-        ? { bold: false, italic: false, underline: false, strike: false, highlight: false } : f);
+      setFmt((f) => (f.bold || f.italic || f.underline || f.dunder || f.strike || f.highlight)
+        ? { bold: false, italic: false, underline: false, dunder: false, strike: false, highlight: false } : f);
       return;
     }
     let next: typeof fmt;
@@ -1794,13 +1875,17 @@ export default function FlowView() {
       next = {
         bold: document.queryCommandState('bold'),
         italic: document.queryCommandState('italic'),
-        underline: document.queryCommandState('underline'),
+        underline: false,
+        dunder: !!doubleUnderlineAt(el),
         strike: document.queryCommandState('strikeThrough'),
         highlight: back === HILITE_RGB || back === HILITE,
       };
+      // Chromium reports a double underline as underlined too; the button that
+      // lights up should be the one that made it.
+      next.underline = !next.dunder && document.queryCommandState('underline');
     } catch { return; }
     setFmt((f) => (f.bold === next.bold && f.italic === next.italic && f.underline === next.underline
-      && f.strike === next.strike && f.highlight === next.highlight) ? f : next);
+      && f.dunder === next.dunder && f.strike === next.strike && f.highlight === next.highlight) ? f : next);
   }
 
   // The caret moves without any key we handle (mouse click, shift-arrow, ⌘A),
@@ -1816,6 +1901,49 @@ export default function FlowView() {
   // has no built-in toggle — read the caret's current background and clear it if
   // it is already ours. styleWithCSS keeps this as an inline style the cell
   // sanitizer allows (background-color) instead of a legacy <font> attribute.
+  /** The double-underline span the caret is in, inside `cell`, if any. */
+  function doubleUnderlineAt(cell: HTMLElement): HTMLElement | null {
+    const sel = window.getSelection();
+    let n: Node | null = sel && sel.rangeCount ? sel.getRangeAt(0).commonAncestorContainer : null;
+    for (; n && n !== cell; n = n.parentNode) {
+      if (n instanceof HTMLElement && /double/i.test(n.style.textDecoration || n.style.textDecorationStyle || '')) return n;
+    }
+    return null;
+  }
+
+  /**
+   * ⌘⇧U. There's no execCommand for a double underline, so it's done by hand:
+   * inside one already, the whole run comes off; with text selected, that text
+   * goes into a double-underline span; with just a caret, the whole cell flips.
+   */
+  function toggleDoubleUnderline(cell: HTMLElement) {
+    const sel = window.getSelection();
+    const inside = doubleUnderlineAt(cell);
+    if (inside) {
+      while (inside.firstChild) inside.parentNode!.insertBefore(inside.firstChild, inside);
+      inside.remove();
+      return;
+    }
+    if (!sel || !sel.rangeCount || sel.isCollapsed || !cell.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      cell.innerHTML = setCellEmphasis(cell.innerHTML, 'doubleUnderline', !cellHasEmphasis(cell.innerHTML, 'doubleUnderline'));
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const frag = range.extractContents();
+    // Nested double spans inside the selection would double up; flatten them.
+    frag.querySelectorAll('span').forEach((sp) => {
+      if (/double/i.test(sp.style.textDecoration || '')) { while (sp.firstChild) sp.parentNode!.insertBefore(sp.firstChild, sp); sp.remove(); }
+    });
+    const wrap = document.createElement('span');
+    wrap.setAttribute('style', DOUBLE_UNDERLINE_STYLE);
+    wrap.appendChild(frag);
+    range.insertNode(wrap);
+    sel.removeAllRanges();
+    const r = document.createRange();
+    r.selectNodeContents(wrap);
+    sel.addRange(r);
+  }
+
   function toggleHighlight() {
     document.execCommand('styleWithCSS', false, 'true');
     const cur = (document.queryCommandValue('backColor') || '').replace(/\s/g, '').toLowerCase();
@@ -1895,6 +2023,14 @@ export default function FlowView() {
     const el = e.currentTarget;
     const mod = e.metaKey || e.ctrlKey;
 
+    // ⌘⇧U — checked before ⌘U, which it would otherwise look like.
+    if (matchesShortcut(e, 'flow-double-underline')) {
+      e.preventDefault();
+      toggleDoubleUnderline(el);
+      noteCellEdit(`${ri}-${ci}`, el.innerHTML);
+      refreshFormatState();
+      return;
+    }
     // Rich-text emphasis — ⌘B / ⌘I / ⌘U
     if (matchesShortcut(e, 'flow-bold') || matchesShortcut(e, 'flow-italic') || matchesShortcut(e, 'flow-underline')) {
       e.preventDefault();
@@ -2042,8 +2178,9 @@ export default function FlowView() {
     writeCells(clearCells(cellsRef.current, keys), { dropArrows: new Set(keys) });
   }
 
-  const EMPHASIS_OF: Record<'bold' | 'italic' | 'underline' | 'strikeThrough' | 'highlight', Emphasis> = {
-    bold: 'bold', italic: 'italic', underline: 'underline', strikeThrough: 'strikeThrough', highlight: 'highlight',
+  const EMPHASIS_OF: Record<'bold' | 'italic' | 'underline' | 'doubleUnderline' | 'strikeThrough' | 'highlight', Emphasis> = {
+    bold: 'bold', italic: 'italic', underline: 'underline', doubleUnderline: 'doubleUnderline',
+    strikeThrough: 'strikeThrough', highlight: 'highlight',
   };
 
   /**
@@ -3244,6 +3381,9 @@ export default function FlowView() {
         </ToolBtn>
         <ToolBtn onMouseDown={(e) => { e.preventDefault(); applyFormat('underline'); }} title="Underline (⌘U)" active={fmt.underline}>
           <span style={{ textDecoration: 'underline', fontSize: 13 }}>U</span>
+        </ToolBtn>
+        <ToolBtn onMouseDown={(e) => { e.preventDefault(); applyFormat('doubleUnderline'); }} title="Double underline (⌘⇧U)" active={fmt.dunder}>
+          <span style={{ textDecoration: 'underline double', fontSize: 13 }}>U</span>
         </ToolBtn>
         <ToolBtn onMouseDown={(e) => { e.preventDefault(); applyFormat('strikeThrough'); }} title="Strikethrough (⌘⇧X)" active={fmt.strike}>
           <span style={{ textDecoration: 'line-through', fontSize: 13 }}>S</span>

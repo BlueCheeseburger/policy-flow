@@ -77,6 +77,13 @@ console.log('\n[5] shortCite — year forms Verbatim actually uses');
   eq("Hampton ‘2k [Andre; 2000; Professor of Law at St. Mary's]", "Hampton '2k".replace("'2k", "'2k"));
 }
 
+console.log('\n[5b] shortCite — the team format: short cite, em dash, full cite');
+{
+  eq('Rather 26 — Dan Rather. February 5. Quals. Publication, "Title," URL', 'Rather 26');
+  eq('Rather 2-5 — Dan Rather. February 5.', 'Rather 2-5');
+  eq('Cutler & Klarnet 26 — David Cutler and Jo Klarnet, Harvard', 'Cutler & Klarnet 26');
+}
+
 console.log('\n[6] shortCite — particles stay attached to the surname');
 {
   eq('Jan van der Berg 21, Professor of Something', "van der Berg '21");
