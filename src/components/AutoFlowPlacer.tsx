@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { StoredFlowData, SheetData } from './FlowView';
+import type { SheetData } from './FlowView';
 import { NUM_ROWS, MAX_ROWS } from './FlowView';
-import { readKey, writeKey } from '../platform/storage';
+import { readFlow, writeFlow, type FlowSnapshot } from '../lib/flowBridge';
+import { isSheetEmpty } from '../lib/flowSheetNaming';
 import { placeRows, nextFreeRow } from '../lib/flowPlace';
 import { findColumnIndex } from '../lib/autoFlowPlacement';
 import { sheetAliasKey } from '../lib/autoFlowParse';
@@ -51,13 +52,15 @@ const cellText = (html: string) => html
 
 const filled = (cells: Record<string, string>, r: number, c: number) => !!(cells[`${r}-${c}`] ?? '').trim();
 
-export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
+export default function AutoFlowPlacer({ flowId, columns, cards, pruneEmpty, onFinish }: {
   flowId: string;
   columns: string[];
   cards: PendingCard[];
+  /** Drop every tab left empty when done (a new flow the parser made). */
+  pruneEmpty: boolean;
   onFinish: () => void;
 }) {
-  const [data, setData] = useState<StoredFlowData | null>(null);
+  const [data, setData] = useState<FlowSnapshot | null>(null);
   const [idx, setIdx] = useState(0);
   const [placed, setPlaced] = useState(0);
   const [left, setLeft] = useState(0);
@@ -80,9 +83,76 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
 
   useEffect(() => {
     let alive = true;
-    void readKey(`flow_data_${flowId}`).then((d: StoredFlowData | null) => { if (alive) setData(d); });
+    void readFlow(flowId).then((d) => { if (alive) setData(d); });
     return () => { alive = false; };
   }, [flowId]);
+
+  async function finish() {
+    if (pruneEmpty) {
+      try {
+        const d = await readFlow(flowId);
+        const kept = d?.sheets.filter((sh) => !isSheetEmpty(sh)) ?? [];
+        if (d && kept.length && kept.length < d.sheets.length) {
+          const activeId = d.sheets[d.activeSheetIdx ?? 0]?.id;
+          await writeFlow(flowId, { ...d, sheets: kept, activeSheetIdx: Math.max(0, kept.findIndex((sh) => sh.id === activeId)) });
+        }
+      } catch { /* leaving an empty tab behind is harmless */ }
+    }
+    onFinish();
+  }
+
+  /** Make a tab now, so it's on the flow and in the row above before anything goes on it. */
+  async function createTab(name: string) {
+    const clean = name.trim().slice(0, 40);
+    if (!clean || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const d = await readFlow(flowId);
+      if (!d) throw new Error('That flow is gone — it may have been deleted.');
+      let sh = d.sheets.find((x) => sheetAliasKey(x.name) === sheetAliasKey(clean));
+      let next = d;
+      if (!sh) {
+        sh = { id: crypto.randomUUID(), name: clean, cells: {}, autoFlowRole: card?.sheetRole ?? null };
+        next = { ...d, sheets: [...d.sheets, sh], activeSheetIdx: d.sheets.length };
+        await writeFlow(flowId, next);
+      }
+      const ci = target?.ci ?? 0;
+      setData(next);
+      setTarget({ sheet: sh.id, newName: '', ci, ri: nextFreeRow(sh.cells, ci), mode: 'cell' });
+    } catch (e: any) {
+      setError(e?.message || 'Could not make that tab.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteTab(id: string) {
+    if (busy) return;
+    const d = await readFlow(flowId);
+    if (!d) return;
+    const sh = d.sheets.find((x) => x.id === id);
+    if (!sh) return;
+    if (d.sheets.length <= 1) { setError('A flow needs at least one tab.'); return; }
+    if (!isSheetEmpty(sh)) {
+      const n = Object.values(sh.cells).filter((v) => (v ?? '').trim()).length;
+      if (!window.confirm(`Delete "${sh.name}" and the ${n} cell${n === 1 ? '' : 's'} on it? ⌘Z in the flow brings it back.`)) return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const activeId = d.sheets[d.activeSheetIdx ?? 0]?.id;
+      const sheets = d.sheets.filter((x) => x.id !== id);
+      const next = { ...d, sheets, activeSheetIdx: Math.max(0, sheets.findIndex((x) => x.id === activeId)) };
+      await writeFlow(flowId, next);
+      setData(next);
+      if (target?.sheet === id && card) setTarget(defaultTarget(next, card, columns, null));
+    } catch (e: any) {
+      setError(e?.message || 'Could not delete that tab.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // A fresh default spot for each new card: right under the last one when it
   // came from the same block, else the end of its speech's column on the tab
@@ -92,7 +162,7 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
     setTarget(defaultTarget(data, card, columns, last));
   }, [data, idx]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { if (!card && cards.length) onFinish(); }, [card]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!card && cards.length) void finish(); }, [card]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!card) return null;
 
@@ -108,7 +178,7 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
     setBusy(true);
     setError('');
     try {
-      const fresh: StoredFlowData | null = await readKey(`flow_data_${flowId}`);
+      const fresh = await readFlow(flowId);
       if (!fresh) throw new Error('That flow is gone — it may have been deleted.');
       const list = fresh.sheets.map((s) => ({ ...s }));
       let si = target.sheet === 'new' ? -1 : list.findIndex((s) => s.id === target.sheet);
@@ -125,9 +195,8 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
       const res = placeRows(list[si], target.ci, target.ri, target.mode, batch.map((c) => c.html));
       list[si] = res.sheet;
       const numRows = Math.max(fresh.numRows ?? NUM_ROWS, Math.min(MAX_ROWS, res.depth + 5));
-      const next: StoredFlowData = { ...fresh, sheets: list, numRows, activeSheetIdx: si };
-      await writeKey(`flow_data_${flowId}`, next);
-      window.dispatchEvent(new CustomEvent('warroom-flow-updated', { detail: { flowId } }));
+      const next: FlowSnapshot = { sheets: list, numRows, activeSheetIdx: si };
+      await writeFlow(flowId, next);
       setLast({ group: batch[batch.length - 1].group, sheet: list[si].id, ci: target.ci, row: res.rows[res.rows.length - 1] });
       setPlaced((v) => v + batch.length);
       setData(next);
@@ -192,21 +261,34 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
           <div className="space-y-3 min-w-0">
             <div className="flex items-center gap-1.5 overflow-x-auto scroll-thin pb-1">
               {sheets.map((s, i) => (
-                <button
+                <div
                   key={s.id}
-                  type="button"
-                  className="text-xs px-2.5 py-1 rounded-sm border whitespace-nowrap transition"
+                  className="flex items-center rounded-sm border whitespace-nowrap transition shrink-0"
                   style={target?.sheet === s.id
                     ? { borderColor: 'var(--accent)', background: 'color-mix(in srgb, var(--accent) 14%, transparent)', color: 'var(--accent)' }
                     : { borderColor: 'var(--border-med)' }}
-                  onClick={() => setTarget((t) => {
-                    const ci = t?.ci ?? 0;
-                    return { sheet: s.id, newName: t?.newName ?? '', ci, ri: nextFreeRow(s.cells, ci), mode: 'cell' };
-                  })}
-                  title={`Tab ${i + 1}`}
                 >
-                  {s.name || `Tab ${i + 1}`}
-                </button>
+                  <button
+                    type="button"
+                    className="text-xs pl-2.5 pr-1.5 py-1"
+                    onClick={() => setTarget((t) => {
+                      const ci = t?.ci ?? 0;
+                      return { sheet: s.id, newName: t?.newName ?? '', ci, ri: nextFreeRow(s.cells, ci), mode: 'cell' };
+                    })}
+                  >
+                    {s.name || `Tab ${i + 1}`}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-ink/35 hover:text-danger pr-2 pl-0.5 py-1 text-xs leading-none"
+                    aria-label={`Delete tab ${s.name || i + 1}`}
+                    title={isSheetEmpty(s) ? 'Delete this tab' : 'Delete this tab and everything on it'}
+                    disabled={busy || sheets.length <= 1}
+                    onClick={() => void deleteTab(s.id)}
+                  >
+                    ✕
+                  </button>
+                </div>
               ))}
               <button
                 type="button"
@@ -223,7 +305,10 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
             </div>
 
             {target?.sheet === 'new' && (
-              <label className="flex items-center gap-2 text-xs">
+              <form
+                className="flex items-center gap-2 text-xs"
+                onSubmit={(e) => { e.preventDefault(); void createTab(target.newName); }}
+              >
                 <span className="text-ink/50 shrink-0">New tab name</span>
                 <input
                   className="input text-sm flex-1"
@@ -232,7 +317,10 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
                   onChange={(e) => setTarget({ ...target, newName: e.target.value })}
                   autoFocus
                 />
-              </label>
+                <button type="submit" className="btn text-sm" disabled={busy || !target.newName.trim()}>
+                  Create tab
+                </button>
+              </form>
             )}
 
             <p className="text-[11px] text-ink/45">
@@ -262,14 +350,15 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
                             style={{ height: 7 }}
                             onClick={() => target && setTarget({ ...target, ci, ri: r, mode: 'insert' })}
                           >
-                            <span
-                              className={`block mx-1 rounded-full transition ${has && !isGap ? 'group-hover:opacity-100 opacity-0' : ''}`}
-                              style={{
-                                height: isGap ? 3 : 2,
-                                background: isGap ? 'var(--accent)' : 'color-mix(in srgb, var(--accent) 55%, transparent)',
-                                opacity: isGap ? 1 : undefined,
-                              }}
-                            />
+                            {(has || isGap) && (
+                              <span
+                                className={`block mx-1 rounded-full transition ${isGap ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                                style={{
+                                  height: isGap ? 3 : 2,
+                                  background: isGap ? 'var(--accent)' : 'color-mix(in srgb, var(--accent) 55%, transparent)',
+                                }}
+                              />
+                            )}
                           </button>
                           {isGap && <Ghost text={card.tag} />}
                           <button
@@ -305,17 +394,19 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
         </div>
 
         <div className="px-5 py-3 border-t border-line flex items-center gap-2 shrink-0 flex-wrap">
-          <button className="btn-primary text-sm" disabled={!target || busy} onClick={() => place(1)}>
-            Place card
+          <button className="btn-primary text-sm" disabled={!target || busy || (target.sheet === 'new' && !target.newName.trim())} onClick={() => place(1)}>
+            {target?.sheet === 'new' && target.newName.trim()
+              ? `Make "${truncName(target.newName)}" and place`
+              : 'Place card'}
           </button>
           {groupSize > 1 && (
-            <button className="btn text-sm" disabled={!target || busy} onClick={() => place(groupSize)}
+            <button className="btn text-sm" disabled={!target || busy || (target.sheet === 'new' && !target.newName.trim())} onClick={() => place(groupSize)}
               title="Places this card and the rest of its block in order, one under the other">
               Place {groupSize === groupTotal ? 'all' : 'the rest'} {groupSize} from this block
             </button>
           )}
           <button className="btn text-sm" disabled={busy} onClick={leaveOut}>Leave out</button>
-          <button className="btn text-sm ml-auto" disabled={busy} onClick={onFinish}
+          <button className="btn text-sm ml-auto" disabled={busy} onClick={() => void finish()}
             title={remaining > 1 ? `The other ${remaining} cards stay out of the flow` : 'This card stays out of the flow'}>
             {remaining > 1 ? `Leave the rest out` : 'Close'}
           </button>
@@ -324,6 +415,8 @@ export default function AutoFlowPlacer({ flowId, columns, cards, onFinish }: {
     </div>
   );
 }
+
+const truncName = (s: string) => (s.trim().length > 18 ? `${s.trim().slice(0, 17)}…` : s.trim());
 
 function Ghost({ text }: { text: string }) {
   return (
@@ -346,7 +439,7 @@ function Bar({ pct }: { pct: number }) {
 }
 
 function defaultTarget(
-  data: StoredFlowData, card: PendingCard, columns: string[],
+  data: FlowSnapshot, card: PendingCard, columns: string[],
   last: { group: string; sheet: string; ci: number; row: number } | null,
 ): Target {
   const sheets = data.sheets;

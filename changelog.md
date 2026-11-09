@@ -15,6 +15,14 @@ this is a running app with no release cuts.
   click where it goes on a small copy of the flow: an empty cell, or the
   line between two cells to slot it in. "Place all from this block" puts a
   whole block in order in one click.
+- In that window, each tab has an ✕ to delete it, and a new tab can be
+  made on the spot with Create tab (or straight from Place).
+- A new flow from parse mode keeps only the tabs something landed on; empty
+  stock tabs like "Harms" are removed, including ones left empty after
+  placing cards.
+- Fixed: Auto Flow's writes could miss a live flow. A placed card or a new
+  tab didn't show up, and a finished write only reached the screen, not the
+  flow's shared copy. Both now go through the open flow like any other edit.
 
 ## 2026-11-07
 

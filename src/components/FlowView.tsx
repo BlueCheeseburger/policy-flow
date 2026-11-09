@@ -756,11 +756,30 @@ export default function FlowView() {
       snap.current = { ...snap.current, sheets: next, activeSheetIdx: idx };
       setCellNonce((n) => n + 1);
     }
+    // Auto Flow asking what's on screen (with any typing flushed), and handing
+    // back tabs to apply. `handled` tells the sender this flow took it, so it
+    // only falls back to writing storage when the flow isn't open.
+    function onGet(e: Event) {
+      const detail = (e as CustomEvent).detail as { flowId?: string; reply?: (d: unknown) => void } | undefined;
+      if (!detail || detail.flowId !== flowId || !detail.reply) return;
+      detail.reply({ sheets: flushAndGetSheetsRef.current(), numRows: snap.current.numRows, activeSheetIdx: snap.current.activeSheetIdx });
+    }
+    function onApply(e: Event) {
+      const detail = (e as CustomEvent).detail as
+        { flowId?: string; sheets?: SheetData[]; numRows?: number; activeSheetIdx?: number; full?: boolean; handled?: boolean } | undefined;
+      if (!detail || detail.flowId !== flowId || !detail.sheets?.length) return;
+      applyExternalRef.current(detail.sheets, detail);
+      detail.handled = true;
+    }
     window.addEventListener('warroom-flow-updated', onExternalEdit as EventListener);
     window.addEventListener('warroom-flow-live-patch', onLivePatch as EventListener);
+    window.addEventListener('warroom-flow-get', onGet as EventListener);
+    window.addEventListener('warroom-flow-apply', onApply as EventListener);
     return () => {
       window.removeEventListener('warroom-flow-updated', onExternalEdit as EventListener);
       window.removeEventListener('warroom-flow-live-patch', onLivePatch as EventListener);
+      window.removeEventListener('warroom-flow-get', onGet as EventListener);
+      window.removeEventListener('warroom-flow-apply', onApply as EventListener);
     };
   }, [flowId]);
 
@@ -1512,6 +1531,56 @@ export default function FlowView() {
   }
   const applyCardsRef = useRef(applyCardMirrorCards);
   applyCardsRef.current = applyCardMirrorCards;
+
+  /**
+   * Take a whole new set of tabs from Auto Flow (its finished write, or a card
+   * the user placed by hand): tabs added, removed, or with cells changed on
+   * any of them. Goes through the same path as an edit made here, so a live
+   * flow's shared copy gets it too. Writing storage and firing
+   * 'warroom-flow-updated' can't do that: a live flow ignores the reload, and
+   * the shared copy then wins on the next open.
+   *
+   * `full` re-sends every cell of every tab to the shared copy, for Auto Flow's
+   * finished write, whose cells only ever reached this screen as animation
+   * frames. Otherwise only the cells that differ from what's on screen go.
+   * One history step, so ⌘Z takes it back.
+   */
+  function applyExternalSheets(next: SheetData[], opts: { numRows?: number; activeSheetIdx?: number; full?: boolean }) {
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    rememberScroll();
+    const saved = flushAndGetSheets();
+    const before = new Map(saved.map((sh) => [sh.id, sh]));
+    const list = normalizeSheets(next);
+    const changed = new Map<string, Set<string> | null>();
+    for (const sh of list) {
+      const old = before.get(sh.id);
+      if (!old) continue; // new to the doc: the structure sync carries its cells
+      if (opts.full) { changed.set(sh.id, null); continue; }
+      const keys = new Set<string>();
+      for (const k of new Set([...Object.keys(old.cells ?? {}), ...Object.keys(sh.cells ?? {})])) {
+        if ((old.cells?.[k] ?? '') !== (sh.cells?.[k] ?? '')) keys.add(k);
+      }
+      if (keys.size) changed.set(sh.id, keys);
+    }
+    const idx = Math.max(0, Math.min(opts.activeSheetIdx ?? snap.current.activeSheetIdx, list.length - 1));
+    const rows = opts.numRows
+      ? Math.max(DEFAULT_ROWS, Math.min(MAX_ROWS, Math.max(snap.current.numRows, opts.numRows)))
+      : snap.current.numRows;
+    setSheets(list);
+    setActiveSheetIdx(idx);
+    setNumRows(rows);
+    cellsRef.current = { ...(list[idx]?.cells ?? {}) };
+    cellsOwnerId.current = list[idx]?.id ?? null;
+    dirtyKeys.current.clear();
+    snap.current = { ...snap.current, sheets: list, activeSheetIdx: idx, numRows: rows };
+    setCellNonce((n) => n + 1);
+    persist({ sheets: list, numRows: rows, activeSheetIdx: idx });
+    pushChangedCellsToDoc(list, changed);
+    recordHistory();
+    requestAnimationFrame(recomputeArrows);
+  }
+  const applyExternalRef = useRef(applyExternalSheets);
+  applyExternalRef.current = applyExternalSheets;
 
   const cmChannelRef = useRef<ReturnType<NonNullable<typeof supabase>['channel']> | null>(null);
   const cmJumpWaiters = useRef(new Map<string, (ack: CmJumpAck) => void>());
@@ -2761,6 +2830,8 @@ export default function FlowView() {
   function flushAndGetSheets(): SheetData[] {
     return flushInto(snap.current.sheets);
   }
+  const flushAndGetSheetsRef = useRef(flushAndGetSheets);
+  flushAndGetSheetsRef.current = flushAndGetSheets;
 
   // Snapshot the flow once, when the Analyze Round panel opens — not on every
   // FlowView render while it's open. FlowView re-renders on every keystroke

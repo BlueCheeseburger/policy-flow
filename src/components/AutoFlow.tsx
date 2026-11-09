@@ -8,7 +8,8 @@ import { humanizeGeminiError } from '../utils/geminiError';
 import { escapeHtml } from '../lib/cellHtml';
 import { useDragActive } from '../hooks/useDragActive';
 import { readAutoFlowTagStyle } from '../lib/autoFlowTagStyle';
-import { pruneUnnamedEmptySheets } from '../lib/flowSheetNaming';
+import { pruneUnnamedEmptySheets, isSheetEmpty } from '../lib/flowSheetNaming';
+import { writeFlow } from '../lib/flowBridge';
 import { sheetAliasKey } from '../lib/autoFlowParse';
 import { parseStructuredFlow, type OutlineContext, type StructuredSkip } from '../lib/autoFlowStructured';
 import AutoFlowPlacer, { type PendingCard } from './AutoFlowPlacer';
@@ -274,10 +275,9 @@ async function replayIntoFlow(
   // the user is left on is the last one written to, mapped through the prune.
   const lastName = writtenSheets[lastSheetIdx]?.name;
   const finalIdx = Math.max(0, finalSheets.findIndex((s) => s.name === lastName));
-  await writeKey(`flow_data_${flowId}`, {
-    ...base, sheets: finalSheets, activeSheetIdx: finalIdx,
-  } as StoredFlowData);
-  window.dispatchEvent(new CustomEvent('warroom-flow-updated', { detail: { flowId } }));
+  // Through the open flow, re-sending every cell: the frames above only ever
+  // reached the screen, and a live flow's shared copy has none of them yet.
+  await writeFlow(flowId, { sheets: finalSheets, numRows: base.numRows, activeSheetIdx: finalIdx }, { full: true });
 }
 
 export default function AutoFlow({ onClose }: { onClose: () => void }) {
@@ -373,7 +373,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
     } | null
   >(null);
   // Cards waiting on the user to pick a cell, and the flow they go into.
-  const [placing, setPlacing] = useState<{ flowId: string; columns: string[]; cards: PendingCard[] } | null>(null);
+  const [placing, setPlacing] = useState<{ flowId: string; columns: string[]; cards: PendingCard[]; pruneEmpty: boolean } | null>(null);
   // Live write progress, for the "still writing" indicator over the flow.
   const [liveProgress, setLiveProgress] = useState<{ done: number; total: number; sheet: string } | null>(null);
 
@@ -974,7 +974,14 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         throw new Error(`None of the ${accepted.length} sorted cards could be placed, so no flow was created.${why}`);
       }
 
-      const finalSheets = pruneUnnamedEmptySheets(sheets);
+      // A new flow from the parser keeps only the tabs something landed on:
+      // its stock tabs ("Harms", "Solvency") are guesses at a shape the docs
+      // may not have, and the cards it couldn't sort get tabs of their own
+      // when the user places them. Anything else drops just the unused
+      // placeholder tabs ("Off 3"), keeping a named tab even when empty.
+      const finalSheets = structured && isNewFlow
+        ? (sheets.filter((sh) => !isSheetEmpty(sh)).length ? sheets.filter((sh) => !isSheetEmpty(sh)) : sheets.slice(0, 1))
+        : pruneUnnamedEmptySheets(sheets);
 
       if (isNewFlow && ctx.kind === 'new') {
         // Named after the AFF being read — that's how a debater refers to a
@@ -1017,8 +1024,8 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
           (done, total, sheet) => setLiveProgress({ done, total, sheet }));
         setLiveProgress(null);
       } else {
-        const updated: StoredFlowData = { ...data, sheets: finalSheets };
-        await writeKey(`flow_data_${flowId}`, updated);
+        // Through the open flow when it's on screen (so a live flow keeps it).
+        await writeFlow(flowId, { sheets: finalSheets, numRows: data.numRows });
       }
 
       setWriteSummary({ written, skipped });
@@ -1027,7 +1034,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       // the parser couldn't split) keeps the wizard up to say so.
       setView({ kind: 'flow', flowId });
       if (pending.length > 0) {
-        setPlacing({ flowId, columns, cards: pending });
+        setPlacing({ flowId, columns, cards: pending, pruneEmpty: structured && isNewFlow });
         setStep('place');
       } else if (skipped.length === 0) onClose();
       else setStep('done');
@@ -1083,6 +1090,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         flowId={placing.flowId}
         columns={placing.columns}
         cards={placing.cards}
+        pruneEmpty={placing.pruneEmpty}
         onFinish={() => {
           setPlacing(null);
           if (writeSummary && writeSummary.skipped.length > 0) setStep('done');
