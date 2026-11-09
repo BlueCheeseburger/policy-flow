@@ -136,8 +136,8 @@ export default function CardMirrorTimer({ state, receivedAt, onCmd, affColor, ne
       aria-label="CardMirror timer"
     >
       <div className="flex items-center gap-2">
-        <span className="text-[10px] uppercase tracking-[0.08em] text-ink/50 flex-1">
-          CardMirror timer
+        <span className="text-[10px] uppercase tracking-[0.08em] text-ink/50 flex-1 whitespace-nowrap">
+          CardMirror
         </span>
         {state.mode === 'speech' ? (
           <span className="text-[10px] uppercase tracking-[0.06em]" style={{ color: 'var(--label-color)' }}>Speech</span>
