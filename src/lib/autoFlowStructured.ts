@@ -35,6 +35,28 @@ export interface StructuredPlacement {
   isPlan: boolean;
   sheetRole: 'advantage' | 'offcase' | null;
   rowKind: Exclude<RowKind, 'pocket'>;
+  /** The headings this row sat under in its doc, as written there. */
+  context: OutlineContext;
+  /**
+   * True when no heading named the position, so the tab is only a guess from
+   * a tagline. Auto Flow holds these back and asks the user where they go.
+   */
+  unresolved: boolean;
+  /** Rows under the same heading instance share this; lets them be placed together. */
+  group: string;
+}
+
+export interface OutlineContext { pocket: string | null; hat: string | null; block: string | null }
+
+/** A row with no column to go in (no speech anywhere on its doc). */
+export interface StructuredSkip {
+  fileName: string;
+  tag: string;
+  cite: string;
+  reason: string;
+  rowKind: 'card' | 'analytic';
+  context: OutlineContext;
+  group: string;
 }
 
 export interface StructuredResult {
@@ -43,7 +65,7 @@ export interface StructuredResult {
   /** Rows on a tab named from a tagline because no heading named the position. */
   unresolved: number;
   unresolvedDocs: { fileName: string; sheetName: string; count: number }[];
-  skipped: { tag: string; reason: string }[];
+  skipped: StructuredSkip[];
 }
 
 export interface StructuredInput {
@@ -105,8 +127,14 @@ export function parseStructuredFlow(input: StructuredInput): StructuredResult {
       const speech = detectSpeech(pocket, doc.fileName, event)
         ?? detectSpeech(hat, '', event) ?? detectSpeech(block, '', event);
       const column = speech ? columnForSpeech(speech, columns) : null;
+      const context: OutlineContext = { pocket, hat, block };
+      const rowKind = it.kind === 'analytic' ? 'analytic' as const : 'card' as const;
+      const group = `${doc.fileName}\u0000${blockId >= 0 ? blockId : hatId >= 0 ? hatId : headingId}`;
       if (!column) {
-        skipped.push({ tag: it.text, reason: speech ? `no "${speech}" column in this flow` : 'no speech label on the doc or its file name' });
+        skipped.push({
+          fileName: doc.fileName, tag: it.text, cite: it.cite ?? '', rowKind, context, group,
+          reason: speech ? `no "${speech}" column in this flow` : 'no speech label on the doc or its file name',
+        });
         continue;
       }
 
@@ -118,6 +146,7 @@ export function parseStructuredFlow(input: StructuredInput): StructuredResult {
         placements.push({
           fileName: doc.fileName, column, sheetName: '', isNewSheet: false, respondsTo: null,
           isPlan: true, sheetRole: 'advantage', tag: it.text, cite: it.cite ?? '', rowKind: 'card',
+          context, unresolved: false, group,
         });
         continue;
       }
@@ -145,7 +174,7 @@ export function parseStructuredFlow(input: StructuredInput): StructuredResult {
       const isNewSheet = !existing && !placements.some((p) => p.sheetName === sheetName);
       if (!existing) known.set(sheetAliasKey(sheetName), sheetName);
       const sheetRole = roleForSpeech(speech);
-      const base = { fileName: doc.fileName, column, sheetName, isNewSheet, respondsTo: null, isPlan: false, sheetRole } as const;
+      const base = { fileName: doc.fileName, column, sheetName, isNewSheet, respondsTo: null, isPlan: false, sheetRole, context, unresolved: generic, group } as const;
 
       // The headings above this row that haven't been written yet and aren't
       // the tab's own name. A plan heading never is: the plan text says it.
@@ -164,7 +193,7 @@ export function parseStructuredFlow(input: StructuredInput): StructuredResult {
         if (h && used !== 'hat' && !advantageName(hat)) flowName = h;
       }
 
-      placements.push({ ...base, tag: it.text, cite: it.cite ?? '', rowKind: it.kind === 'analytic' ? 'analytic' : 'card' });
+      placements.push({ ...base, tag: it.text, cite: it.cite ?? '', rowKind });
       if (generic) {
         unresolved++;
         const k = `${doc.fileName}\u0000${sheetName}`;

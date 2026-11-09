@@ -10,7 +10,8 @@ import { useDragActive } from '../hooks/useDragActive';
 import { readAutoFlowTagStyle } from '../lib/autoFlowTagStyle';
 import { pruneUnnamedEmptySheets } from '../lib/flowSheetNaming';
 import { sheetAliasKey } from '../lib/autoFlowParse';
-import { parseStructuredFlow } from '../lib/autoFlowStructured';
+import { parseStructuredFlow, type OutlineContext, type StructuredSkip } from '../lib/autoFlowStructured';
+import AutoFlowPlacer, { type PendingCard } from './AutoFlowPlacer';
 import { layoutRows, headingHtml, type RowKind } from '../lib/flowRowStyle';
 import type { OutlineItem } from '../lib/docOutline';
 import { findColumnIndex, firstEmptyRow, inferEventFromPockets, inferVariantFromHats } from '../lib/autoFlowPlacement';
@@ -35,7 +36,7 @@ import {
 // mirror its runEmphasize/answerQuestion).
 
 
-type Step = 'upload' | 'extracting' | 'target' | 'classifying' | 'review' | 'writing' | 'live' | 'done';
+type Step = 'upload' | 'extracting' | 'target' | 'classifying' | 'review' | 'writing' | 'live' | 'done' | 'place';
 
 interface DocResult {
   fileName: string;
@@ -111,6 +112,10 @@ interface Placement {
    * indents styled by lib/flowRowStyle.ts.
    */
   rowKind?: Exclude<RowKind, 'pocket'>;
+  /** Parse mode: the headings it sat under, and whether any of them named its position. */
+  context?: OutlineContext;
+  unresolved?: boolean;
+  group?: string;
   removed: boolean;
 }
 
@@ -230,6 +235,7 @@ async function replayIntoFlow(
   finalSheets: SheetData[],
   writeLog: { sheetIdx: number; cellKey: string; html: string }[],
   skip: { current: boolean },
+  onProgress?: (done: number, total: number, sheetName: string) => void,
 ) {
   const live: SheetData[] = base.sheets.map((s) => ({ ...s, cells: { ...s.cells } }));
   const perFrame = Math.max(1, Math.ceil(writeLog.length / Math.max(1, FILL_TARGET_MS / FRAME_MS)));
@@ -259,6 +265,7 @@ async function replayIntoFlow(
     const switched = sheetIdx !== lastSheetIdx && lastSheetIdx !== -1;
     lastSheetIdx = sheetIdx;
     frame(live.map((s) => ({ ...s, cells: { ...s.cells } })), sheetIdx);
+    onProgress?.(Math.min(writeLog.length, i + group.length), writeLog.length, writtenSheets[sheetIdx]?.name ?? '');
     await new Promise((r) => setTimeout(r, switched ? TAB_SWITCH_MS : FRAME_MS));
   }
 
@@ -285,10 +292,20 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
   const wordCounts = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && step !== 'writing') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && step !== 'writing' && step !== 'live' && step !== 'place') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose, step]);
+
+  // While the live write runs, keystrokes go nowhere: a cell focused before it
+  // started would otherwise take typing that the next frame wipes out.
+  useEffect(() => {
+    if (step !== 'live') return;
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const swallow = (e: KeyboardEvent) => { e.preventDefault(); e.stopPropagation(); };
+    window.addEventListener('keydown', swallow, true);
+    return () => window.removeEventListener('keydown', swallow, true);
+  }, [step]);
 
   // Target step
   const [targetMode, setTargetMode] = useState<'new' | 'existing'>('new');
@@ -349,8 +366,16 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
   // Parser-run shortfalls, surfaced on review: cards it could place but not
   // separate into a named position, and cards it couldn't place at all.
   const [parserNotes, setParserNotes] = useState<
-    { unresolved: number; skipped: number; docs: { fileName: string; sheetName: string; count: number }[] } | null
+    {
+      unresolved: number; skipped: number; docs: { fileName: string; sheetName: string; count: number }[];
+      /** Rows with no column to go in: the user places these by hand too. */
+      leftOut: StructuredSkip[];
+    } | null
   >(null);
+  // Cards waiting on the user to pick a cell, and the flow they go into.
+  const [placing, setPlacing] = useState<{ flowId: string; columns: string[]; cards: PendingCard[] } | null>(null);
+  // Live write progress, for the "still writing" indicator over the flow.
+  const [liveProgress, setLiveProgress] = useState<{ done: number; total: number; sheet: string } | null>(null);
 
   // Writing / done
   const [writeSummary, setWriteSummary] = useState<{ written: number; skipped: SkippedPlacement[] } | null>(null);
@@ -510,7 +535,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
     setProgress(null);
     try {
       const res = parseStructuredFlow({ docs: docsIn, columns, existingSheets, event });
-      if (res.placements.length === 0) {
+      if (res.placements.length === 0 && res.skipped.length === 0) {
         throw new Error(
           'The parser couldn\'t place a single card — none of these docs had a recognisable speech label ' +
           'on their headings or filenames. Switch to AI sorting for these docs.',
@@ -519,11 +544,12 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       const list: Placement[] = res.placements.map((p) => ({ ...p, id: crypto.randomUUID(), removed: false }));
       const cardsIn = docsIn.reduce((n, d) => n + d.outline.filter((o) => o.kind === 'tag' || o.kind === 'analytic').length, 0);
       setClassifyStats({ cardsIn, placed: list.length, dropped: res.skipped.length, batches: 0 });
-      const notes = { unresolved: res.unresolved, skipped: res.skipped.length, docs: res.unresolvedDocs };
+      const notes = { unresolved: res.unresolved, skipped: res.skipped.length, docs: res.unresolvedDocs, leftOut: res.skipped };
       setParserNotes(notes);
       setPlacements(list);
       setAiFlowName(res.flowName ?? null);
-      if (target.kind === 'new') { await commitWrite(true, target, list, res.flowName, notes); return; }
+      // Nothing sorted but some cards to place by hand: straight to placing them.
+      if (target.kind === 'new' || list.length === 0) { await commitWrite(target.kind === 'new', target, list, res.flowName, notes); return; }
       setStep('review');
     } catch (e: any) {
       setError(e?.message || 'The parser could not sort these cards.');
@@ -629,7 +655,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       // every default tab was pruned for being empty, and the user was dropped
       // into a flow containing one blank "RFD/Notes" with the wizard already
       // closed and no error anywhere. Never create a flow out of zero cards.
-      if (accepted.length === 0) {
+      if (accepted.length === 0 && !notes?.leftOut.length) {
         throw new Error(
           'The model didn\'t return a placement for a single card, so there\'s nothing to write — ' +
           'no flow was created. This is almost always a one-off; sorting again usually fixes it.',
@@ -664,6 +690,19 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       sheets.forEach((s, i) => sheetIndexByName.set(sheetAliasKey(s.name), i));
 
       const skipped: SkippedPlacement[] = [];
+      // Parse mode's cards with no clear spot: under a generic header, or with
+      // no column to go in. Held out of the write; the user places each one.
+      const pending: PendingCard[] = [];
+      const holdBack = (p: Placement, why: string, guess: boolean) => pending.push({
+        id: p.id, fileName: p.fileName, tag: p.tag, cite: p.cite,
+        html: buildCellHtml(p.tag, p.cite),
+        context: p.context ?? { pocket: null, hat: null, block: null },
+        group: p.group ?? p.id,
+        suggestedSheet: guess ? p.sheetName : null,
+        column: p.column || null,
+        sheetRole: p.sheetRole,
+        why,
+      });
       let written = 0;
       // Where each written card landed, keyed by its tag — so a card that answers
       // another can align to it and/or draw an arrow back.
@@ -747,7 +786,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       // deliberate decision, so it gets a deliberate pass.
       const createNewSheetsForRole = (role: 'advantage' | 'offcase') => {
         for (const p of accepted) {
-          if (!p.isNewSheet || p.sheetRole !== role) continue;
+          if (!p.isNewSheet || p.sheetRole !== role || p.unresolved) continue;
           const name = p.sheetName.trim();
           if (!name || sheetIndexByName.has(sheetAliasKey(name))) continue;
           ensureSheet(name);
@@ -776,7 +815,15 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       const structured = accepted.some((p) => p.rowKind);
       let deepestRow = 0;
       if (structured) {
-        const rows = accepted.filter((p) => !p.isPlan);
+        for (const p of accepted) {
+          if (p.unresolved && !p.isPlan) {
+            const head = p.context?.block ?? p.context?.hat ?? p.context?.pocket;
+            holdBack(p, head
+              ? `It sat under "${head}", which doesn't name a position, so the parser can't tell which tab it belongs on.`
+              : 'No heading above it names a position, so the parser can\'t tell which tab it belongs on.', true);
+          }
+        }
+        const rows = accepted.filter((p) => !p.isPlan && !p.unresolved);
         const rowHtml = (p: Placement) => (p.rowKind === 'hat' || p.rowKind === 'block')
           ? headingHtml(p.rowKind, p.tag)
           : buildCellHtml(p.tag, p.cite);
@@ -789,7 +836,9 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
           const sheetIdx = ensureSheet(first.sheetName);
           const colIdx = findColumnIndex(columns, first.column);
           if (colIdx === -1) {
-            for (const p of run) skipped.push({ tag: p.tag, sheetName: p.sheetName, column: p.column, reason: 'column not found' });
+            for (const p of run) {
+              if (p.rowKind === 'card' || p.rowKind === 'analytic') holdBack(p, `This flow has no "${p.column}" column.`, true);
+            }
             continue;
           }
           const cells = sheets[sheetIdx].cells;
@@ -801,7 +850,10 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
             if (html === null) return;
             const p = run[k++];
             const ri = start + off;
-            if (ri >= MAX_ROWS) { skipped.push({ tag: p.tag, sheetName: p.sheetName, column: p.column, reason: 'column is full' }); return; }
+            if (ri >= MAX_ROWS) {
+              if (p.rowKind === 'card' || p.rowKind === 'analytic') holdBack(p, `The ${p.column} column on "${p.sheetName}" is full.`, false);
+              return;
+            }
             writeCard(sheetIdx, ri, colIdx, p, html);
             deepestRow = Math.max(deepestRow, ri + 1);
           });
@@ -906,7 +958,18 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       // lost: a sheet has to be literally empty to qualify.
       // Every card was rejected during placement (unknown column, full column).
       // Same rule as above: a flow with nothing in it is not a result.
-      if (written === 0) {
+      for (const sk of notes?.leftOut ?? []) {
+        pending.push({
+          id: crypto.randomUUID(), fileName: sk.fileName, tag: sk.tag, cite: sk.cite,
+          html: buildCellHtml(sk.tag, sk.cite), context: sk.context, group: sk.group,
+          suggestedSheet: null, column: null, sheetRole: null,
+          why: sk.reason === 'no speech label on the doc or its file name'
+            ? 'Neither the doc\'s headings nor its file name say which speech it is, so there\'s no column to put it in.'
+            : `${sk.reason.charAt(0).toUpperCase()}${sk.reason.slice(1)}.`,
+        });
+      }
+
+      if (written === 0 && pending.length === 0) {
         const why = skipped[0]?.reason ? ` Every card was skipped — first reason: "${skipped[0].reason}".` : '';
         throw new Error(`None of the ${accepted.length} sorted cards could be placed, so no flow was created.${why}`);
       }
@@ -949,7 +1012,10 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         setView({ kind: 'flow', flowId });
         setStep('live');
         skipLive.current = false;
-        await replayIntoFlow(flowId, empty, sheets, finalSheets, writeLog, skipLive);
+        setLiveProgress({ done: 0, total: writeLog.length, sheet: sheets[0]?.name ?? '' });
+        await replayIntoFlow(flowId, empty, sheets, finalSheets, writeLog, skipLive,
+          (done, total, sheet) => setLiveProgress({ done, total, sheet }));
+        setLiveProgress(null);
       } else {
         const updated: StoredFlowData = { ...data, sheets: finalSheets };
         await writeKey(`flow_data_${flowId}`, updated);
@@ -960,7 +1026,10 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       // clean run: anything the user should know about (rejected cards OR cards
       // the parser couldn't split) keeps the wizard up to say so.
       setView({ kind: 'flow', flowId });
-      if (skipped.length === 0 && !(notes && notes.unresolved > 0)) onClose();
+      if (pending.length > 0) {
+        setPlacing({ flowId, columns, cards: pending });
+        setStep('place');
+      } else if (skipped.length === 0) onClose();
       else setStep('done');
     } catch (e: any) {
       setError(e?.message || 'Failed to write into the flow.');
@@ -987,28 +1056,61 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
       {parserNotes.unresolved > 0 && (
         <>
           <strong>{parserNotes.unresolved} card{parserNotes.unresolved === 1 ? '' : 's'}</strong>{' '}
-          couldn't be split into positions — these documents label those blocks with a
-          generic header, so the parser has nothing to separate them by:
+          sit under a generic header (like &ldquo;OFF&rdquo;), so nothing names their position.
+          After the rest is written, you&rsquo;ll pick where each one goes:
           <ul className="mt-1.5 mb-1.5 ml-3 list-disc space-y-0.5">
             {parserNotes.docs.map((d, i) => (
               <li key={i}>
-                <strong>{d.count}</strong> card{d.count === 1 ? '' : 's'} in {d.fileName} — all under
-                {' '}"{d.sheetName}"
+                <strong>{d.count}</strong> card{d.count === 1 ? '' : 's'} in {d.fileName}, starting
+                {' '}&ldquo;{d.sheetName}&rdquo;
               </li>
             ))}
           </ul>
-          Re-running those docs with AI sorting reads the taglines and splits them.{' '}
+          Or sort those docs with AI instead, which reads the taglines to split them.{' '}
         </>
       )}
       {parserNotes.skipped > 0 && (
         <>
-          <strong>{parserNotes.skipped}</strong> had no recognisable speech and were left out.
+          <strong>{parserNotes.skipped}</strong> had no recognisable speech; you&rsquo;ll pick a spot for those too.
         </>
       )}
     </div>
   ) : null;
 
+  if (step === 'place' && placing) {
+    return (
+      <AutoFlowPlacer
+        flowId={placing.flowId}
+        columns={placing.columns}
+        cards={placing.cards}
+        onFinish={() => {
+          setPlacing(null);
+          if (writeSummary && writeSummary.skipped.length > 0) setStep('done');
+          else onClose();
+        }}
+      />
+    );
+  }
+
+  const livePct = liveProgress && liveProgress.total > 0 ? (liveProgress.done / liveProgress.total) * 100 : undefined;
+
   return (
+    <>
+    {/* While the flow is being written, it isn't the user's yet: a click or a
+        keystroke would land in a cell the next frame overwrites. This layer
+        takes them and says why; the corner card shows how far along it is. */}
+    {live && (
+      <div
+        className="fixed inset-0 z-40"
+        style={{ cursor: 'progress', background: 'color-mix(in srgb, var(--bg-main) 22%, transparent)' }}
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        <div className="absolute left-1/2 -translate-x-1/2 top-3 glass-elevated rounded-full shadow-lg px-4 py-1.5 flex items-center gap-2 text-xs">
+          <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: 'var(--accent)' }} />
+          <span className="text-ink/80">Auto Flow is still writing this flow. Editing unlocks when it&rsquo;s done.</span>
+        </div>
+      </div>
+    )}
     <div
       className={live
         ? 'fixed bottom-4 right-4 z-50'
@@ -1317,7 +1419,9 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                   )}
                 </p>
               )}
-              {groupBySheet(placements).map(([sheetName, isNewSheet, items]) => (
+              {groupBySheet(placements.map((p) => (p.unresolved
+                ? { ...p, sheetName: 'You pick where these go, after writing', isNewSheet: false }
+                : p))).map(([sheetName, isNewSheet, items]) => (
                 <div key={sheetName} className="rounded-sm border border-line">
                   <div className="px-3 py-1.5 flex items-center gap-2 border-b border-line" style={{ background: 'var(--bg-elevated)' }}>
                     <span className="text-xs font-medium text-ink/75">{sheetName}</span>
@@ -1345,7 +1449,11 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                           ) : (
                             <span className="text-ink/80">{truncate(p.tag, 90)}</span>
                           )}
-                          <span className="block text-ink/40 mt-0.5">{p.sheetName} → {p.column}</span>
+                          <span className="block text-ink/40 mt-0.5">
+                            {p.unresolved
+                              ? `under "${p.context?.block ?? p.context?.hat ?? p.context?.pocket ?? '—'}" · ${p.column}`
+                              : `${p.sheetName} → ${p.column}`}
+                          </span>
                         </span>
                       </label>
                     ))}
@@ -1370,9 +1478,16 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
           {/* STEP: writing */}
           {step === 'live' && (
             <div className="space-y-2">
-              <p className="text-xs text-ink/60">
-                Flowing your docs in. The tabs switch as the sort moves between positions —
-                everything is already saved as it lands.
+              <div className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="font-medium text-ink/85">Writing into the flow…</span>
+                {liveProgress && (
+                  <span className="text-ink/50 tabular-nums">{liveProgress.done} / {liveProgress.total}</span>
+                )}
+              </div>
+              <ProgressBar pct={livePct} />
+              <p className="text-[11px] text-ink/55 leading-snug">
+                {liveProgress?.sheet ? <>Now on <strong className="text-ink/75">{liveProgress.sheet}</strong>. </> : null}
+                The tabs switch as it moves between positions. Hold off on editing until this card goes away.
               </p>
             </div>
           )}
@@ -1453,6 +1568,7 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -1466,6 +1582,7 @@ function stepLabel(step: Step): string {
     case 'writing': return 'Writing…';
     case 'live': return 'Flowing it in front of you…';
     case 'done': return 'Done';
+    case 'place': return 'Place the rest';
   }
 }
 

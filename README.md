@@ -14,6 +14,8 @@ no account, no sign-up, nothing to install.
    cards into the right tab and column. Or switch on parsing: no AI, each
    pocket becomes a tab, every tagline and analytic gets a row, hats are
    double underlined, blocks underlined, and what's under them indented.
+   Cards under a generic header ("OFF") you place yourself, on a small copy
+   of the flow.
 3. **CardMirror plugin.** Press `~` on a tag in CardMirror to drop it (with
    its cite) into the column you're flowing, or on a hat or block to send
    every card under it at once. Right-click any row that came in that way to

@@ -3,6 +3,19 @@
 What's changed in this fork, newest first. Grouped by day, not by version —
 this is a running app with no release cuts.
 
+## 2026-11-09
+
+- Auto Flow's parse switch is on the first screen, before you upload.
+- While Auto Flow writes into a new flow, a progress card shows how far
+  along it is and which tab it's on, and the flow is locked until it's done,
+  so a click or keystroke can't land in a cell that's about to be rewritten.
+- Cards the parser can't sort (under a generic header like "OFF", or in a
+  doc with no speech label) are no longer guessed onto a tab. After the
+  rest is written, each one is shown with its pocket, hat and block, and you
+  click where it goes on a small copy of the flow: an empty cell, or the
+  line between two cells to slot it in. "Place all from this block" puts a
+  whole block in order in one click.
+
 ## 2026-11-07
 
 - Auto Flow can parse instead of using AI: a switch in the Auto Flow

@@ -73,6 +73,11 @@ console.log('\n[2] tabs: pockets, speech labels, generic headers');
     [...new Set(r2.placements.map((x) => x.sheetName))].join() === 'ECON DA,STATES CP');
   check('generic headers are never written as rows', !r2.placements.some((x) => x.rowKind === 'hat' || x.rowKind === 'block'));
   check('those rows are counted as unresolved', r2.unresolved === 3, String(r2.unresolved));
+  check('and flagged, so Auto Flow holds them back for the user to place', r2.placements.every((x) => x.unresolved));
+  check('each keeps the headings it sat under', r2.placements[0].context.block === '1NC---OFF' && r2.placements[0].context.pocket === '1NC');
+  check('rows under one "OFF" share a group; the next "OFF" is another',
+    r2.placements[0].group === r2.placements[1].group && r2.placements[1].group !== r2.placements[2].group);
+  check('rows under a named position are not flagged', r.placements.every((x) => !x.unresolved));
 
   const affDoc = { fileName: '1AC.docx', outline: [
     { kind: 'pocket', text: '1AC' }, { kind: 'hat', text: 'Plan' },
@@ -86,6 +91,8 @@ console.log('\n[2] tabs: pockets, speech labels, generic headers');
   check('a matching tab already in the flow is reused', existing.placements.every((x) => x.sheetName === 'Stocks DA' && !x.isNewSheet));
   const noSpeech = parseStructuredFlow({ docs: [{ fileName: 'notes.docx', outline: [{ kind: 'tag', text: 'x' }] as any }], columns: COLS, existingSheets: [], event: 'policy' });
   check('a doc with no speech anywhere is skipped, with a reason', noSpeech.placements.length === 0 && noSpeech.skipped.length === 1);
+  check('a skipped row keeps what the user needs to place it by hand',
+    noSpeech.skipped[0].fileName === 'notes.docx' && noSpeech.skipped[0].tag === 'x' && noSpeech.skipped[0].rowKind === 'card');
 }
 
 console.log('\n[3] layout: buffers around hats, indents under hats and blocks');
