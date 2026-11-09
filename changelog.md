@@ -5,6 +5,12 @@ this is a running app with no release cuts.
 
 ## 2026-11-09
 
+- CardMirror's timer shows in the flow: a pill in the bottom-right corner
+  with the clock that's up, and an arrow that opens the whole timer (start
+  and pause, reset, speech presets, both prep clocks, and a display you can
+  click while paused to type a time). The buttons run CardMirror's own
+  timer, so the two stay in step. Needs plugin 0.1.6 and a CardMirror build
+  that shares its timer with plugins.
 - Auto Flow's parse switch is on the first screen, before you upload.
 - While Auto Flow writes into a new flow, a progress card shows how far
   along it is and which tab it's on, and the flow is locked until it's done,

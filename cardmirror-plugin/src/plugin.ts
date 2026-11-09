@@ -16,6 +16,10 @@ import {
   chunkCards, cmTopic, isCmSource, itemsToCards, sha256Hex,
   type CmCardsAck, type CmJumpAck, type ExtractedItemLike,
 } from '../../src/lib/cardMirrorLink';
+import {
+  CM_TIMER_CMD_EVENT, CM_TIMER_EVENT, CM_TIMER_HEARTBEAT_MS, CM_TIMER_REQ_EVENT,
+  parseTimerCmd, type CmTimerMode, type CmTimerState,
+} from '../../src/lib/cmTimer';
 import { openSettingsWindow } from './settingsWindow';
 import { helpPlainSections } from './readmeSections';
 
@@ -42,6 +46,17 @@ interface Api {
   settings: {
     get(key: string): boolean | string | number | undefined;
     onChanged?(cb: (key: string, value: boolean | string | number) => void): () => void;
+  };
+  /** CardMirror builds with the timer in the plugin API; absent on older ones. */
+  timer?: {
+    get(): CmTimerState & { at: number };
+    onChanged(cb: (s: CmTimerState & { at: number }) => void): () => void;
+    start(): void;
+    pause(): void;
+    reset(): void;
+    selectMode(mode: CmTimerMode): void;
+    loadPreset(minutes: number): void;
+    setActiveMs(ms: number): void;
   };
 }
 
@@ -114,12 +129,14 @@ async function connect(): Promise<Conn | null> {
       if (done) { cardWaiters.delete(payload.id); done(payload as CmCardsAck); }
     });
     channel.on('broadcast', { event: CM_JUMP_EVENT }, ({ payload }) => { void handleJump(channel, payload); });
+    channel.on('broadcast', { event: CM_TIMER_REQ_EVENT }, () => sendTimer(true));
+    channel.on('broadcast', { event: CM_TIMER_CMD_EVENT }, ({ payload }) => runTimerCmd(payload));
     const ready = new Promise<boolean>((resolve) => {
       // Offline, the socket just keeps retrying and never reports a status,
       // which used to leave a send hanging with no message at all.
       setTimeout(() => resolve(false), 6000);
       channel.subscribe((status) => {
-        if (status === 'SUBSCRIBED') resolve(true);
+        if (status === 'SUBSCRIBED') { resolve(true); sendTimer(true); }
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') resolve(false);
       });
     });
@@ -148,6 +165,42 @@ async function joinedConn(): Promise<Conn | null> {
     if (conn === c) teardown();
   }
   return null;
+}
+
+// ── Timer ───────────────────────────────────────────────────────────────────
+// CardMirror's timer, mirrored into the flow (src/lib/cmTimer.ts). Sent on
+// every change, every CM_TIMER_HEARTBEAT_MS so the flow knows CardMirror is
+// still there, and whenever a flow asks. Button presses from the flow run the
+// timer's own actions, and the change they make is what goes back.
+
+let lastTimerJson = '';
+
+function sendTimer(force = false) {
+  const t = api?.timer;
+  const c = conn;
+  if (!t || !c || c.channel.state !== 'joined') return;
+  const { at: _at, ...state } = t.get();
+  const json = JSON.stringify(state);
+  if (!force && json === lastTimerJson) return;
+  lastTimerJson = json;
+  void c.channel.send({ type: 'broadcast', event: CM_TIMER_EVENT, payload: state });
+}
+
+function runTimerCmd(raw: unknown) {
+  const t = api?.timer;
+  const cmd = parseTimerCmd(raw);
+  if (!t || !cmd) return;
+  switch (cmd.action) {
+    case 'start': t.start(); break;
+    case 'pause': t.pause(); break;
+    case 'reset': t.reset(); break;
+    case 'mode': t.selectMode(cmd.mode); break;
+    case 'preset': t.loadPreset(cmd.minutes); break;
+    case 'set': t.setActiveMs(cmd.ms); break;
+  }
+  // Answer even when nothing changed (a start on a spent prep clock), so the
+  // flow's display settles back to what CardMirror actually shows.
+  sendTimer(true);
 }
 
 async function handleJump(channel: RealtimeChannel, payload: any) {
@@ -314,13 +367,16 @@ void connect();
   // work before any command has run. Older builds ignore this field.
   activate(a: Api) {
     adoptApi(a);
+    const offTimer = a.timer?.onChanged(() => sendTimer());
+    const beat = a.timer ? setInterval(() => sendTimer(true), CM_TIMER_HEARTBEAT_MS) : null;
+    sendTimer(true);
     const off = a.settings.onChanged?.((key) => {
       // A change made in the gear is the newest word — drop the settings
       // window's copy so the gear's value takes effect.
       if (key === 'token') { a.storage.set('pairingCode', ''); void connect(); }
       if (key === 'includeHeadings') a.storage.set('includeHeadings', undefined);
     });
-    return () => { off?.(); teardown(); };
+    return () => { off?.(); offTimer?.(); if (beat) clearInterval(beat); teardown(); };
   },
   commands: [
     {

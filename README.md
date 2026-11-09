@@ -19,7 +19,8 @@ no account, no sign-up, nothing to install.
 3. **CardMirror plugin.** Press `~` on a tag in CardMirror to drop it (with
    its cite) into the column you're flowing, or on a hat or block to send
    every card under it at once. Right-click any row that came in that way to
-   jump straight back to the card. See [cardmirror-plugin/](cardmirror-plugin/).
+   jump straight back to the card. CardMirror's timer shows in the corner of
+   the flow and runs from there too. See [cardmirror-plugin/](cardmirror-plugin/).
 4. **Local-first, no account required, ever.** Flows are saved to this
    browser and work fully offline; a one-time transfer code moves them to a
    new device or browser without creating an account anywhere.
@@ -55,6 +56,13 @@ copying and pasting.
   isn't open, you're told which one to open.
 - **Tells you what happened.** Each send shows a message in CardMirror, like
   "Sent 6 rows to Adv 1", "Policy Flow is paused", or "No flow is open".
+- **Shows CardMirror's timer.** A small pill in the flow's bottom-right
+  corner shows the clock that's up (speech, aff prep or neg prep). Its
+  arrow opens the whole timer: start and pause, reset, the speech presets,
+  both prep clocks, and a display you can click while paused to type a
+  time. Every button runs the timer in CardMirror, so the two always match.
+  Needs a CardMirror build that shares its timer with plugins (newer than
+  1.17.2-bcb.2) and plugin 0.1.6.
 
 **Setting it up**
 

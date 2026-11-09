@@ -3,6 +3,11 @@ import * as Y from 'yjs';
 import { useApp, FlowMeta } from '../store/appStore';
 import SharePanel from './SharePanel';
 import NotesDrawer, { type NotesTab } from './NotesDrawer';
+import CardMirrorTimer from './CardMirrorTimer';
+import {
+  CM_TIMER_CMD_EVENT, CM_TIMER_EVENT, CM_TIMER_REQ_EVENT, parseTimerMsg,
+  type CmTimerCmd, type CmTimerState,
+} from '../lib/cmTimer';
 import { useLiveNote } from '../hooks/useLiveNote';
 import { createFlowSync, FlowSyncHandle, RemoteCursor, PresenceUser, FlowSyncStatus } from '../lib/flowSync';
 import { isShortcutDisabled, matchesShortcut } from '../lib/shortcutPrefs';
@@ -338,6 +343,9 @@ export default function FlowView() {
   // null when unpaired. cmLive: the private channel is actually subscribed.
   const [cmHash, setCmHash] = useState<string | null | undefined>(undefined);
   const [cmLive, setCmLive] = useState(false);
+  // CardMirror's timer, as the plugin last reported it, and when it arrived
+  // here. Null until a CardMirror build that shares its timer says something.
+  const [cmTimer, setCmTimer] = useState<{ state: CmTimerState; at: number } | null>(null);
   // True once the channel has been down long enough to call it "not
   // connected" rather than "still connecting" — a fresh load or a brief
   // network blip shouldn't flash an alarm.
@@ -1605,14 +1613,29 @@ export default function FlowView() {
         const done = typeof payload?.id === 'string' ? cmJumpWaiters.current.get(payload.id) : undefined;
         if (done) { cmJumpWaiters.current.delete(payload.id); done(payload as CmJumpAck); }
       })
-      .subscribe((status) => setCmLive(status === 'SUBSCRIBED'));
+      .on('broadcast', { event: CM_TIMER_EVENT }, ({ payload }: any) => {
+        const state = parseTimerMsg(payload);
+        if (state) setCmTimer({ state, at: Date.now() });
+      })
+      .subscribe((status) => {
+        setCmLive(status === 'SUBSCRIBED');
+        // Ask for the timer now rather than waiting on the plugin's heartbeat.
+        if (status === 'SUBSCRIBED') reply(CM_TIMER_REQ_EVENT, {});
+      });
     cmChannelRef.current = channel;
     return () => {
       cmChannelRef.current = null;
       setCmLive(false);
+      setCmTimer(null);
       void supabase!.removeChannel(channel);
     };
   }, [cmHash, flowId]);
+
+  function sendTimerCmd(cmd: CmTimerCmd) {
+    const channel = cmChannelRef.current;
+    if (!channel || !cmLive) { pushNotice("Can't reach CardMirror right now — check your connection."); return; }
+    void channel.send({ type: 'broadcast', event: CM_TIMER_CMD_EVENT, payload: cmd });
+  }
 
   // Right-click on a row that came from CardMirror: ask the plugin to jump to
   // the card. The plugin answers with what happened, so every outcome gets a
@@ -3560,6 +3583,19 @@ export default function FlowView() {
           <Tooltip text="Cancel (Esc)">
             <button className="btn px-1.5 py-0 text-[11px] leading-5" onMouseDown={(e) => e.preventDefault()} onClick={cancelDrawMode}>✕</button>
           </Tooltip>
+        </div>
+      )}
+      {/* CardMirror's timer, in the grid's bottom-right corner (clear of the
+          scrollbar), beside the notes drawer rather than over it. */}
+      {cmTimer && cmHash && (
+        <div className="absolute pointer-events-none flex justify-end" style={{ right: 16, bottom: 16, zIndex: 25 }}>
+          <CardMirrorTimer
+            state={cmTimer.state}
+            receivedAt={cmTimer.at}
+            onCmd={sendTimerCmd}
+            affColor={affColor}
+            negColor={negColor}
+          />
         </div>
       )}
       <div
