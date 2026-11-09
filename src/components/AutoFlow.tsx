@@ -1039,9 +1039,13 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
           {step === 'upload' && (
             <div className="space-y-4">
               <p className="text-sm text-ink/60">
-                Upload one or more speech docs (<code>.docx</code>). The model reads only the tags,
-                cites, and heading structure — never the card bodies — and sorts each card into the
-                right column and sheet of a flow.
+                {engine === 'parser'
+                  ? <>Upload one or more speech docs (<code>.docx</code>). Auto Flow reads the tags, cites, and
+                      heading structure — never the card bodies — and places each row by the doc&rsquo;s own
+                      pockets, hats, and blocks. No AI call.</>
+                  : <>Upload one or more speech docs (<code>.docx</code>). The model reads only the tags,
+                      cites, and heading structure — never the card bodies — and sorts each card into the
+                      right column and sheet of a flow.</>}
               </p>
               <div
                 className="flex flex-col items-center justify-center p-10 text-center border-2 rounded-sm cursor-pointer transition"
@@ -1066,6 +1070,43 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                   {dragActive ? 'Drop to add' : 'Drop speech docs here (.docx)'}
                 </div>
                 <div className="text-xs text-ink/40">drop several at once, or click to open the file picker</div>
+              </div>
+
+              {/* Parse instead of AI. Off every time the dialog opens: AI
+                  sorting is the default, and parsing is the deliberate choice
+                  for a doc whose headings already say where everything goes. */}
+              <div className="flex items-start gap-3 rounded-sm border border-line p-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={engine === 'parser'}
+                  aria-label="Auto flow by parsing the document"
+                  onClick={() => setEngine((v) => (v === 'parser' ? 'ai' : 'parser'))}
+                  className="relative shrink-0 mt-0.5 transition"
+                  style={{
+                    width: 34, height: 19, borderRadius: 999,
+                    background: engine === 'parser' ? 'var(--accent)' : 'var(--bg-elevated)',
+                    border: '1px solid var(--border-med)',
+                  }}
+                >
+                  <span
+                    className="absolute rounded-full transition"
+                    style={{
+                      top: 1, left: engine === 'parser' ? 16 : 1,
+                      width: 15, height: 15,
+                      background: '#fff',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
+                    }}
+                  />
+                </button>
+                <button type="button" className="text-left flex-1 cursor-pointer" onClick={() => setEngine((v) => (v === 'parser' ? 'ai' : 'parser'))}>
+                  <div className="text-xs font-medium text-ink/80">Auto flow by parsing instead of AI</div>
+                  <div className="text-[11px] text-ink/45 mt-0.5 leading-snug">
+                    Reads the doc&rsquo;s own structure, no AI call. Each pocket becomes a tab, every tagline and
+                    analytic gets a row, hats are double underlined with a blank row around them, blocks are
+                    underlined, and everything under them is indented.
+                  </div>
+                </button>
               </div>
             </div>
           )}
@@ -1138,43 +1179,6 @@ export default function AutoFlow({ onClose }: { onClose: () => void }) {
                   </select>
                 </div>
               )}
-
-              {/* Parse instead of AI. Off every time the dialog opens: AI
-                  sorting is the default, and parsing is the deliberate choice
-                  for a doc whose headings already say where everything goes. */}
-              <div className="flex items-start gap-3 rounded-sm border border-line p-3">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={engine === 'parser'}
-                  aria-label="Auto flow by parsing the document"
-                  onClick={() => setEngine((v) => (v === 'parser' ? 'ai' : 'parser'))}
-                  className="relative shrink-0 mt-0.5 transition"
-                  style={{
-                    width: 34, height: 19, borderRadius: 999,
-                    background: engine === 'parser' ? 'var(--accent)' : 'var(--bg-elevated)',
-                    border: '1px solid var(--border-med)',
-                  }}
-                >
-                  <span
-                    className="absolute rounded-full transition"
-                    style={{
-                      top: 1, left: engine === 'parser' ? 16 : 1,
-                      width: 15, height: 15,
-                      background: '#fff',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
-                    }}
-                  />
-                </button>
-                <button type="button" className="text-left flex-1 cursor-pointer" onClick={() => setEngine((v) => (v === 'parser' ? 'ai' : 'parser'))}>
-                  <div className="text-xs font-medium text-ink/80">Auto flow by parsing instead of AI</div>
-                  <div className="text-[11px] text-ink/45 mt-0.5 leading-snug">
-                    Reads the doc&rsquo;s own structure, no AI call. Each pocket becomes a tab, every tagline and
-                    analytic gets a row, hats are double underlined with a blank row around them, blocks are
-                    underlined, and everything under them is indented.
-                  </div>
-                </button>
-              </div>
 
               {/* Opt-in AI summary mode. The ai-glow-ring marks it as an AI action
                   — it adds an AI call and reads card bodies. A real switch
